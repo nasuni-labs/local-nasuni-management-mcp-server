@@ -26,7 +26,7 @@ Note: NMC MCP Server is Claude-specific using Anthropic's MCP framework.
 - **Share Administration**: SMB/CIFS Share management
 - **Health Monitoring**: Real-time system health and performance monitoring
 
-### 📊 Analytics & Reporting
+### Analytics & Reporting
 - **Performance Metrics**: Detailed system performance analytics
 - **Usage Statistics**: Comprehensive usage reporting and analysis
 - **Notification Management**: Centralized alert and notification handling
