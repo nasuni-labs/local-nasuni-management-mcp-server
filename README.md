@@ -147,11 +147,6 @@ asyncio.run(test_all_tools())
 
 Configure your `.env` file as described above, then add the JSON config to your Claude configuration file (usually `claude_desktop_config.json`):
 
-On your Claude Desktop Client -> Settings -> Developer -> Edit Config
-
-<img width="990" height="652" alt="image" src="https://github.com/user-attachments/assets/59609953-b601-4f43-ac86-75d2b13894fd" />
-
-
 ```json
 {
   "mcpServers": {
@@ -162,7 +157,9 @@ On your Claude Desktop Client -> Settings -> Developer -> Edit Config
   }
 }
 ```
+On your Claude Desktop Client -> Settings -> Developer -> Edit Config
 
+<img width="990" height="652" alt="image" src="https://github.com/user-attachments/assets/59609953-b601-4f43-ac86-75d2b13894fd" />
 
 ## Available Tools
 
