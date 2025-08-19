@@ -1,0 +1,90 @@
+# ===== SECURITY - NEVER COMMIT THESE =====
+.env
+*.token
+*.key
+secrets/
+credentials/
+
+# ===== PYTHON =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Note: __init__.py files should be included (not ignored)
+
+# ===== VIRTUAL ENVIRONMENTS =====
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# ===== IDE & EDITORS =====
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ===== LOGS & TEMPORARY FILES =====
+*.log
+logs/
+temp/
+tmp/
+.cache/
+.pytest_cache/
+
+# ===== JUPYTER NOTEBOOKS =====
+.ipynb_checkpoints
+
+# ===== COVERAGE & TESTING =====
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# ===== DOCUMENTATION =====
+docs/_build/
+site/
+
+# ===== OS GENERATED =====
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# ===== PROJECT SPECIFIC =====
+# Add any project-specific files to ignore here
+config/local_settings.py
+test_data/
+backup/
