@@ -18,8 +18,6 @@ async def main():
     print("🚀 Starting NMC MCP server...", file=sys.stderr)
     setup_logging()
 
-    logger.info("Hello world")
-
     logger.debug("check")
     try:
         # Create and configure the server

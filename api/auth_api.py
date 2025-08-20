@@ -7,18 +7,19 @@ from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
 import httpx
 from api.base_client import BaseAPIClient
+from config.logging_setup import setup_logging, get_logger
 
+logger = get_logger(__name__)
 
 class AuthAPIClient(BaseAPIClient):
     """Client for handling authentication and token management."""
     
     def __init__(self, config):
         super().__init__(config)
+        setup_logging()
         self.username = os.getenv("NMC_USERNAME")
         self.password = os.getenv("NMC_PASSWORD")
     
-    import httpx
-
     async def login(self, username: str = None, password: str = None) -> Dict[str, Any]:
         """Login and get a fresh token."""
         # Use provided credentials or fall back to environment variables
@@ -47,10 +48,10 @@ class AuthAPIClient(BaseAPIClient):
         }
         
         # Debug logging
-        print(f"Making POST request to: {url}", file=sys.stderr)
-        print(f"SSL Verification: {self.config.verify_ssl}", file=sys.stderr)
-        print(f"Headers: {clean_headers}", file=sys.stderr)
-        print(f"Request body: {login_data}", file=sys.stderr)
+        logger.debug(f"Making POST request to: {url}", file=sys.stderr)
+        logger.debug(f"SSL Verification: {self.config.verify_ssl}", file=sys.stderr)
+        logger.debug(f"Headers: {clean_headers}", file=sys.stderr)
+        logger.debug(f"Request body: {login_data}", file=sys.stderr)
         
         try:
             # Create a completely fresh HTTP client
@@ -65,16 +66,16 @@ class AuthAPIClient(BaseAPIClient):
                     json=login_data
                 )
                 
-                print(f"Response status: {response.status_code}", file=sys.stderr)
-                print(f"Response headers: {dict(response.headers)}", file=sys.stderr)
+                logger.debug(f"Response status: {response.status_code}", file=sys.stderr)
+                logger.debug(f"Response headers: {dict(response.headers)}", file=sys.stderr)
                 
                 # Try to get response body even on error for debugging
                 try:
                     response_body = response.json()
-                    print(f"Response body: {response_body}", file=sys.stderr)
+                    logger.debug(f"Response body: {response_body}", file=sys.stderr)
                 except:
                     response_body = response.text
-                    print(f"Response text: {response_body}", file=sys.stderr)
+                    logger.debug(f"Response text: {response_body}", file=sys.stderr)
                 
                 # Check for HTTP errors
                 response.raise_for_status()

@@ -15,7 +15,9 @@ class ListSharesTool(BaseTool):
     def __init__(self, api_client: SharesAPIClient):
         super().__init__(
             name="list_shares",
-            description="Lists all SMB/CIFS network shares (NOT volumes). Returns SMB shares and CIFS Shares across all filers and volumes. Shows share names, paths, permissions, and access settings. Use this when asked about 'shares', 'network shares', 'SMB shares', 'CIFS shares', or 'Windows shares'."
+            description="Lists all SMB/CIFS network shares (NOT volumes). Returns SMB shares and CIFS Shares across all filers and volumes. Shows share names, paths, permissions, and access settings. Use this when asked about 'shares', 'network shares', 'SMB shares', 'CIFS shares', or 'Windows shares'." \
+            "Contains share details such as readonly shares, browseable (Visible Share), comments, Allowed Hosts (hosts_allow), Hide Unreadable Files (hide_unreadable), Previous Versions (enable_previous_vers), Case-Sensitive Paths (case_sensitive), Snapshot Directories (enable_snapshot_dirs)," \
+            "Sync and Mobile Access (mobile), Web Access(browser_access), Asynchronous I/O (aio_enabled), Block files (veto_files), Support for Mac OS X (fruit_enabled), and SMB Encryption (smb_encrypt)"
         )
         self.api_client = api_client
         
