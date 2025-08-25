@@ -33,9 +33,10 @@ Note: NMC MCP Server is Claude-specific using Anthropic's MCP framework.
 
 ## Prerequisites
 
-- **Python**: 3.8 or higher
+- **Python**: 3.13 or higher
 - **NMC Credentials**: Accessing the NMC API requires a user who is a member of an NMC group that has the "Enable NMC API Access" permission enabled. API users must also have the corresponding NMC permission for the action that they are performing. Both native and domain accounts are supported for NMC API authentication (SSO accounts are not supported using the NMC API).
 - **Claude AI**: Compatible with Anthropic's Claude AI platform
+- **Claude Desktop Client**
 
 ## Installation
 
