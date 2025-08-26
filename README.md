@@ -1,6 +1,6 @@
 # NMC MCP Server
 
-A comprehensive Model Context Protocol (MCP) server that provides tools for interacting with the Nasuni Management Center (NMC) through Claude AI integration. Using this MCP server, you can get granular details about your Nasuni enviornment, monitor the health of your appliances, summarize notifications, and generate custom reports.  
+A comprehensive Model Context Protocol (MCP) server that provides tools for interacting with the Nasuni Management Center (NMC) through Claude AI integration. Using this MCP server, you can get granular details about your Nasuni environment, monitor the health of your appliances, summarize notifications, and generate custom reports.
 
 Note: NMC MCP Server is Claude-specific using Anthropic's MCP framework.
 
@@ -15,8 +15,6 @@ Note: NMC MCP Server is Claude-specific using Anthropic's MCP framework.
 - [Development](#development)
 - [Troubleshooting](#troubleshooting)
 - [Contributing](#contributing)
-
-
 
 ## Features
 
@@ -33,10 +31,68 @@ Note: NMC MCP Server is Claude-specific using Anthropic's MCP framework.
 
 ## Prerequisites
 
-- **Python**: 3.13 or higher
-- **NMC Credentials**: Accessing the NMC API requires a user who is a member of an NMC group that has the "Enable NMC API Access" permission enabled. API users must also have the corresponding NMC permission for the action that they are performing. Both native and domain accounts are supported for NMC API authentication (SSO accounts are not supported using the NMC API).
-- **Claude AI**: Compatible with Anthropic's Claude AI platform
-- **Claude Desktop Client**
+### Python Requirements
+- **Python**: Version 3.13 or later is required
+- **Recommendation**: Install the latest stable Python version for best performance and security
+
+#### Checking Your Python Version
+```bash
+# Check current Python version
+python --version
+# or
+python3 --version
+```
+
+#### Installing the Latest Python Version
+Always install the latest stable Python version from the [official Python website](https://www.python.org/downloads/).
+
+**macOS (using Homebrew):**
+```bash
+# Install latest Python (recommended)
+brew install python
+
+# Or install latest Python 3
+brew install python@3
+```
+
+**Linux (Ubuntu/Debian):**
+```bash
+# Add deadsnakes PPA for latest Python versions
+sudo apt update
+sudo apt install software-properties-common
+sudo add-apt-repository ppa:deadsnakes/ppa
+sudo apt update
+
+# Install latest Python (check python.org for current version number)
+sudo apt install python3.13 python3.13-pip python3.13-venv
+
+# Or use your distribution's latest available version
+sudo apt install python3 python3-pip python3-venv
+```
+
+**Windows:**
+1. Visit [python.org/downloads](https://www.python.org/downloads/)
+2. Download the latest Python version
+3. Run the installer and make sure to check "Add Python to PATH"
+
+**Using pyenv (Cross-platform - Recommended for Developers):**
+```bash
+# Install pyenv first, then:
+pyenv install --list | grep "3\." | tail -5  # See latest versions
+pyenv install 3.13.1  # Replace with latest version number
+pyenv global 3.13.1   # Set as default
+```
+
+### Claude AI Integration Requirements
+- **Claude AI Compatibility**: This server is designed exclusively for Claude AI and uses Anthropic's Model Context Protocol (MCP) framework
+- **Claude Desktop Client**: Required for local deployment - the MCP server integrates with Claude through the desktop application
+  - **Download**: [Get Claude Desktop Client](https://claude.ai/download)
+- **Important**: When running locally, MCP server tools are **only accessible through the Claude Desktop Client**, not through Claude's web interface
+
+### NMC API Requirements  
+- **NMC Credentials**: Accessing the NMC API requires a user who is a member of an NMC group that has the "Enable NMC API Access" permission enabled
+- **API Permissions**: API users must also have the corresponding NMC permission for each action they perform
+- **Account Types**: Both native and domain accounts are supported for NMC API authentication (SSO accounts are **not supported** via the NMC API)
 
 ## Installation
 
@@ -47,13 +103,45 @@ git clone <repository-url>
 cd nmc-mcp-server
 ```
 
-### 2. Install Dependencies
+### 2. Create Virtual Environment (Recommended)
 
 ```bash
+# Create virtual environment
+python3 -m venv nmc-mcp-env
+
+# Activate virtual environment
+# On macOS/Linux:
+source nmc-mcp-env/bin/activate
+# On Windows:
+nmc-mcp-env\Scripts\activate
+```
+
+### 3. Install Dependencies
+
+```bash
+# Use pip3 to ensure you're using Python 3.x package manager
+pip3 install -r requirements.txt
+
+# Alternative: if pip3 is not available, use pip
 pip install -r requirements.txt
 ```
 
-### 3. Set Up Environment
+**Note about pip vs pip3:**
+- Use `pip3` if you have both Python 2 and Python 3 installed
+- Use `pip` if you only have Python 3 installed or if `pip3` is not available
+- When in a virtual environment, both commands typically point to the same Python 3 version
+
+### 4. Verify Installation
+
+```bash
+# Check that Python 3.13+ is being used
+python --version
+
+# Verify dependencies are installed
+pip3 list | grep -E "(mcp-server|httpx|python-dotenv)"
+```
+
+### 5. Set Up Environment
 
 Create a `.env` file in the project root:
 
@@ -69,41 +157,41 @@ Configure the following environment variables in your `.env` file:
 
 #### Required Configuration
 ```env
-# API Configuration
-API_BASE_URL=https://your-nmc-server.com
-API_TOKEN=your_api_token_here
+# NMC API Base URL (replace with your actual NMC server)
+API_BASE_URL="https://your-nmc-server.com"
 
-# Alternative token file method
-API_TOKEN_FILE=/path/to/your/token.txt
+# NMC Login Credentials (Ensure the user has adequate permissions)
+NMC_USERNAME="username"
+NMC_PASSWORD="password"
+
+# SSL Verification (set to true for production)
+VERIFY_SSL=false
 ```
 
 #### Optional Configuration
 ```env
-# SSL Configuration
-VERIFY_SSL=false
-
-# Timeout Settings
+# API Request Timeout (seconds)
 API_TIMEOUT=30.0
+```
 
-### API Token Setup
-
-You can provide your API token in two ways:
-
-#### Method 1: Environment Variable
+#### Development/Debugging Configuration
 ```env
-API_TOKEN=your_actual_token_here
+# Uncomment for development
+# DEBUG=true
+# LOG_LEVEL=DEBUG
 ```
 
-#### Method 2: Token File
-```env
-API_TOKEN_FILE=/secure/path/to/token.txt
-```
+### Authentication Setup
 
-Create the token file:
-```bash
-echo "your_actual_token_here" > /secure/path/to/token.txt
-chmod 600 /secure/path/to/token.txt
-```
+The NMC MCP Server uses **username and password authentication** to connect to your NMC instance:
+
+1. **Username**: Your NMC login username
+2. **Password**: Your NMC login password
+3. **Permissions**: Ensure the user account has:
+   - "Enable NMC API Access" permission
+   - Appropriate permissions for the operations you want to perform
+
+**Security Note**: The credentials are stored in your local `.env` file and are only used to authenticate with your NMC server.
 
 ### Verification
 
@@ -148,19 +236,79 @@ asyncio.run(test_all_tools())
 
 Configure your `.env` file as described above, then add the JSON config to your Claude configuration file (usually `claude_desktop_config.json`):
 
+#### Step 1: Find Your Python Executable Path
+First, determine the correct Python executable path:
+
+```bash
+# Find your Python executable path
+which python3
+# or
+which python
+
+# If using a virtual environment (recommended), activate it first:
+source nmc-mcp-env/bin/activate  # macOS/Linux
+# nmc-mcp-env\Scripts\activate   # Windows
+which python
+```
+
+**Common Python paths:**
+- **macOS (Homebrew)**: `/opt/homebrew/bin/python3` or `/usr/local/bin/python3`
+- **macOS (pyenv)**: `/Users/yourusername/.pyenv/shims/python`
+- **Linux**: `/usr/bin/python3` or `/usr/local/bin/python3`
+- **Windows**: `C:\Python313\python.exe` or `C:\Users\yourusername\AppData\Local\Programs\Python\Python313\python.exe`
+- **Virtual Environment**: `/path/to/nmc-mcp-env/bin/python` (macOS/Linux) or `C:\path\to\nmc-mcp-env\Scripts\python.exe` (Windows)
+
+#### Step 2: Update Claude Desktop Configuration
+Add this configuration to your `claude_desktop_config.json`:
+
 ```json
 {
   "mcpServers": {
     "nmc-mcp-server": {
-      "command": "python",
-      "args": ["/path/to/nmc-mcp-server/main.py"]
+      "command": "/path/to/your/python/executable",
+      "args": ["/full/path/to/nmc-mcp-server/main.py"]
     }
   }
 }
 ```
-On your Claude Desktop Client -> Settings -> Developer -> Edit Config
+
+**Example configurations:**
+
+**Using virtual environment (recommended):**
+```json
+{
+  "mcpServers": {
+    "nmc-mcp-server": {
+      "command": "/Users/john/Projects/nmc-mcp-server/nmc-mcp-env/bin/python",
+      "args": ["/Users/john/Projects/nmc-mcp-server/main.py"]
+    }
+  }
+}
+```
+
+**Using system Python:**
+```json
+{
+  "mcpServers": {
+    "nmc-mcp-server": {
+      "command": "/opt/homebrew/bin/python3",
+      "args": ["/Users/john/Projects/nmc-mcp-server/main.py"]
+    }
+  }
+}
+```
+
+#### Step 3: Locate Claude Desktop Config File
+On your Claude Desktop Client -> Settings -> Developer -> Edit Config -> claude_desktop_config.json
 
 <img width="990" height="652" alt="image" src="https://github.com/user-attachments/assets/59609953-b601-4f43-ac86-75d2b13894fd" />
+
+
+#### Step 4: Restart Claude Desktop
+After updating the configuration file, restart the Claude Desktop application to load the new MCP server.
+
+## Setup Complete
+Test your NMC MCP Server, ask Claude "List all my filers withd details"
 
 ## Available Tools
 
