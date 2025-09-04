@@ -257,7 +257,7 @@ class ListSharesRawTool(BaseTool):
             for col in columns:
                 value = share.get(col, "N/A")
                 if isinstance(value, bool):
-                    value = "✓" if value else "✗"
+                    value = "✔" if value else "✗"
                 elif value is None:
                     value = "N/A"
                 else:
@@ -271,7 +271,7 @@ class ListSharesRawTool(BaseTool):
             if all(isinstance(s.get(col), bool) for s in shares_data if col in s):
                 true_count = sum(1 for s in shares_data if s.get(col) == True)
                 false_count = sum(1 for s in shares_data if s.get(col) == False)
-                output += f"{col}: {true_count} ✓, {false_count} ✗\n"
+                output += f"{col}: {true_count} ✔, {false_count} ✗\n"
         
         return output
     
@@ -374,7 +374,8 @@ class AnalyzeShareFieldTool(BaseTool):
             if isinstance(value, bool):
                 boolean_fields.append(f"  {key}: {value}")
             elif isinstance(value, str):
-                string_fields.append(f"  {key}: '{value[:50]}...' if len(value) > 50 else '{value}'")
+                value_display = f"'{value[:50]}...'" if len(value) > 50 else f"'{value}'"
+                string_fields.append(f"  {key}: {value_display}")
             else:
                 other_fields.append(f"  {key}: {type(value).__name__}")
         
@@ -496,7 +497,11 @@ class AnalyzeShareFieldTool(BaseTool):
         path = share.get("path", "/")
         volume = share.get("volume_guid", "unknown")[:8] + "..."
         
-        path_display = "🏠 Root" if path in ["/", "\\", ""] else f"📂 {path}"
+        # Handle Windows backslash paths
+        if path in ["/", "\\", ""]:
+            path_display = "🏠 Root"
+        else:
+            path_display = f"📂 {path}"
         
         output = f"  ✓ {name}\n"
         output += f"     Path: {path_display}\n"
@@ -688,7 +693,12 @@ class GetSharesByFilerTool(BaseTool):
                     if summary['mobile_access']:
                         access_icons += "📱"
                     
-                    path_display = summary['path'] if summary['path'] != "\\" else "/ (Root)"
+                    # Handle Windows backslash paths properly
+                    path = summary['path']
+                    if path == "\\":
+                        path_display = "/ (Root)"
+                    else:
+                        path_display = path
                     
                     output += f"""
   {permission_icon} {summary['name']} {access_icons}
@@ -742,10 +752,17 @@ class GetBrowserAccessibleSharesTool(BaseTool):
                 permission_icon = "📖" if summary['readonly'] else "✏️"
                 mobile_icon = "📱" if summary['mobile_access'] else ""
                 
+                # Handle Windows backslash paths properly
+                path = summary['path']
+                if path == '\\':
+                    path_display = '/ (Root)'
+                else:
+                    path_display = path
+                
                 output += f"""🌐 {summary['name']} {permission_icon}{mobile_icon}
    Filer: {summary['filer_serial_number']}
    Volume: {summary['volume_guid']}
-   Path: {summary['path'] if summary['path'] != '\\' else '/ (Root)'}
+   Path: {path_display}
    Permission: {summary['permission']}
    Access Methods: {', '.join(summary['access_methods'])}
 
@@ -819,7 +836,12 @@ class GetSharesByVolumeTool(BaseTool):
                     if summary['mobile_access']:
                         access_icons += "📱"
                     
-                    path_display = summary['path'] if summary['path'] != "\\" else "/ (Root)"
+                    # Handle Windows backslash paths properly
+                    path = summary['path']
+                    if path == "\\":
+                        path_display = "/ (Root)"
+                    else:
+                        path_display = path
                     
                     output += f"""
   {permission_icon} {summary['name']} {access_icons}
@@ -949,7 +971,12 @@ Previous Versions Disabled: {prev_vers_disabled} ({prev_vers_disabled/total_shar
                 prev_vers = share.get("enable_previous_vers", False)
                 
                 status_icon = "✅" if prev_vers else "❌"
-                path_display = "🏠 Root" if path in ["/", "\\", ""] else f"📂 {path}"
+                
+                # Handle Windows backslash paths properly
+                if path in ["/", "\\", ""]:
+                    path_display = "🏠 Root"
+                else:
+                    path_display = f"📂 {path}"
                 
                 output += f"   {status_icon} {name}\n"
                 output += f"      Path: {path_display}\n"
