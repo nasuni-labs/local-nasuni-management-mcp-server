@@ -94,7 +94,13 @@ pyenv global 3.13.1   # Set as default
 - **API Permissions**: API users must also have the corresponding NMC permission for each action they perform
 - **Account Types**: Both native and domain accounts are supported for NMC API authentication (SSO accounts are **not supported** via the NMC API)
 
-## Installation
+## Installation 
+## Using Installation Script 
+
+
+
+
+## Manual Setup
 
 ### 1. Clone the Repository
 
