@@ -95,9 +95,64 @@ pyenv global 3.13.1   # Set as default
 - **Account Types**: Both native and domain accounts are supported for NMC API authentication (SSO accounts are **not supported** via the NMC API)
 
 ## Installation 
-## Using Installation Script 
+There are two options to install and configure the NMC MCP Server:
+- **1. Automated Setup (Recommended)**
+- **2. Manual Setup**
 
+## Option 1: Automated Setup (Recommended)
+The automated installer handles all setup steps including downloading the code, creating virtual environment, installing dependencies, and configuring Claude Desktop.
 
+### 1. Download the Installer Script
+Download the [nmc-installer.py]([url](https://github.com/nasuni-labs/nasuni-nmc-mcp-desktop-server/blob/main/nmc-installer.py)) from the repo. 
+
+### 2. Run the Installer 
+
+**All Platforms:**
+```bash
+python install.py
+# or
+python3 install.py
+```
+
+### Step 3: Provide Required Information
+
+During installation, you'll be prompted for:
+
+1. **Installation directory** 
+   - Default: `~/nmc-mcp-server` (Mac/Linux) or `%USERPROFILE%\nmc-mcp-server` (Windows)
+   - Press Enter to accept default or specify a custom path
+
+2. **NMC Server URL**
+   - Example: `https://nmc.company.com` or `https://192.168.1.100`
+   - The installer will add `https://` if not provided
+
+3. **NMC Username**
+   - Your NMC login username
+   - For domain accounts: `DOMAIN\username` or just `username`
+
+4. **NMC Password**
+   - Your NMC login password
+   - Input is hidden for security
+
+5. **SSL Certificate Verification**
+   - Default: No (recommended for internal servers)
+   - Choose 'y' only if your NMC has valid SSL certificates
+
+### Step 4: Restart Claude Desktop and Test
+
+1. **Close Claude Desktop completely** (not just minimize)
+2. **Start Claude Desktop** again
+3. **Test the integration** by asking Claude:
+   - "List all my filers"
+   - "Show unhealthy volumes"
+   - "Get share statistics"
+
+If Claude Desktop was not installed when you ran the installer:
+1. Install Claude Desktop from [claude.ai/download](https://claude.ai/download)
+2. Run the configuration script that was created:
+   ```bash
+   python ~/nmc-mcp-server/configure_claude.py
+   ```
 
 
 ## Manual Setup
