@@ -103,15 +103,15 @@ There are two options to install and configure the NMC MCP Server:
 The automated installer handles all setup steps including downloading the code, creating virtual environment, installing dependencies, and configuring Claude Desktop.
 
 ### 1. Download the Installer Script
-Download the [nmc-installer.py]([url](https://github.com/nasuni-labs/nasuni-nmc-mcp-desktop-server/blob/main/nmc-installer.py)) from the repo. 
+Download the [nmc-installer.py](https://github.com/nasuni-labs/nasuni-nmc-mcp-desktop-server/blob/main/nmc-installer.py) from the repo. 
 
 ### 2. Run the Installer 
 
 **All Platforms:**
 ```bash
-python install.py
+python nmc-installer.py
 # or
-python3 install.py
+python3 nmc-installer.py
 ```
 
 ### Step 3: Provide Required Information
