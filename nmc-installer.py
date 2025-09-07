@@ -17,8 +17,9 @@ import urllib.error
 import ssl
 import zipfile
 import tarfile
+import argparse
 from pathlib import Path
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict, Tuple, List
 import tempfile
 import time
 
@@ -36,6 +37,7 @@ class Colors:
     RED = '\033[91m'
     ENDC = '\033[0m'
     BOLD = '\033[1m'
+    YELLOW = '\033[93m'
 
     @staticmethod
     def disable():
@@ -47,17 +49,36 @@ class Colors:
         Colors.RED = ''
         Colors.ENDC = ''
         Colors.BOLD = ''
+        Colors.YELLOW = ''
 
-# Disable colors on Windows if not supported
+
+
+# Handle Windows terminal compatibility
 if platform.system() == 'Windows':
     try:
-        import colorama
-        colorama.init()
-    except ImportError:
-        Colors.disable()
+        # Try to enable ANSI escape sequences on Windows 10+
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
+    except:
+        # If that fails, try colorama
+        try:
+            import colorama
+            colorama.init(autoreset=True)
+        except ImportError:
+            # If colorama not available, disable colors
+            Colors.disable()
+else:
+    # For non-Windows, colors should work
+    pass
 
 class Installer:
-    def __init__(self):
+
+    #boolen to check if claude was successfully configured
+    global claude_configured 
+    claude_configured = False
+
+    def __init__(self, args=None):
         self.os_type = platform.system()
         self.arch = platform.machine()
         self.home = Path.home()
@@ -67,16 +88,45 @@ class Installer:
         self.venv_path = None
         self.config = {}
         
+        # Handle arguments
+        if args is None:
+            # Create default args if none provided
+            self.args = argparse.Namespace(
+                directory=None,
+                non_interactive=False,
+                skip_claude=False,
+                nmc_url=None,
+                username=None,
+                password=None,
+                use_git=False,
+                quiet=False
+            )
+        else:
+            self.args = args
+        
+
+
     def print_header(self):
         """Print welcome header"""
-        print(f"\n{Colors.CYAN}{'='*60}{Colors.ENDC}")
-        print(f"{Colors.BOLD}{Colors.HEADER}🚀 NMC MCP Server Universal Installer{Colors.ENDC}")
-        print(f"{Colors.CYAN}{'='*60}{Colors.ENDC}")
-        print(f"OS: {Colors.GREEN}{self.os_type}{Colors.ENDC}")
-        print(f"Architecture: {Colors.GREEN}{self.arch}{Colors.ENDC}")
-        print(f"Python: {Colors.GREEN}{sys.version.split()[0]}{Colors.ENDC}")
-        print(f"Repository: {Colors.GREEN}{GITHUB_REPO}{Colors.ENDC}")
-        print(f"{Colors.CYAN}{'='*60}{Colors.ENDC}\n")
+        try:
+            print(f"\n{Colors.CYAN}{'='*60}{Colors.ENDC}")
+            print(f"{Colors.BOLD}{Colors.HEADER}🚀 NMC MCP Server Universal Installer{Colors.ENDC}")
+            print(f"{Colors.CYAN}{'='*60}{Colors.ENDC}")
+            print(f"OS: {Colors.GREEN}{self.os_type}{Colors.ENDC}")
+            print(f"Architecture: {Colors.GREEN}{self.arch}{Colors.ENDC}")
+            print(f"Python: {Colors.GREEN}{sys.version.split()[0]}{Colors.ENDC}")
+            print(f"Repository: {Colors.GREEN}{GITHUB_REPO}{Colors.ENDC}")
+            print(f"{Colors.CYAN}{'='*60}{Colors.ENDC}\n")
+        except Exception as e:
+            # Fallback without colors if there's any issue
+            print("\n" + "="*60)
+            print("NMC MCP Server Universal Installer")
+            print("="*60)
+            print(f"OS: {self.os_type}")
+            print(f"Architecture: {self.arch}")
+            print(f"Python: {sys.version.split()[0]}")
+            print(f"Repository: {GITHUB_REPO}")
+            print("="*60 + "\n")
     
     def check_python(self) -> bool:
         """Check if Python 3.10+ is installed"""
@@ -89,29 +139,36 @@ class Installer:
         
         print(f"{Colors.GREEN}✅ Python {sys.version.split()[0]} is compatible{Colors.ENDC}")
         
-        # Find the right Python command
-        for cmd in ['python3', 'python', sys.executable]:
-            try:
-                result = subprocess.run([cmd, '--version'], capture_output=True, text=True)
-                if result.returncode == 0:
-                    self.python_cmd = cmd
-                    break
-            except:
-                continue
+        # Use the current Python executable
+        self.python_cmd = sys.executable
         
-        # Find pip command
-        for cmd in ['pip3', 'pip', f'{self.python_cmd} -m pip']:
-            try:
-                result = subprocess.run(cmd.split() + ['--version'], capture_output=True, text=True)
-                if result.returncode == 0:
-                    self.pip_cmd = cmd
-                    break
-            except:
-                continue
+        # Find pip command - prefer using python -m pip
+        self.pip_cmd = f'"{self.python_cmd}" -m pip'
         
-        if not self.pip_cmd:
-            print(f"{Colors.WARNING}⚠️  pip not found, will use {self.python_cmd} -m pip{Colors.ENDC}")
-            self.pip_cmd = f"{self.python_cmd} -m pip"
+        # Test if pip is available
+        try:
+            result = subprocess.run(
+                [self.python_cmd, "-m", "pip", "--version"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if result.returncode != 0:
+                print(f"{Colors.WARNING}⚠️  pip not found, attempting to install...{Colors.ENDC}")
+                # Try to bootstrap pip
+                try:
+                    subprocess.run(
+                        [self.python_cmd, "-m", "ensurepip", "--default-pip"],
+                        capture_output=True,
+                        text=True,
+                        timeout=30
+                    )
+                except:
+                    print(f"{Colors.RED}Could not install pip automatically{Colors.ENDC}")
+                    print("Please install pip manually and retry")
+                    return False
+        except Exception as e:
+            print(f"{Colors.WARNING}⚠️  Could not verify pip: {e}{Colors.ENDC}")
         
         return True
     
@@ -137,6 +194,41 @@ class Installer:
             print("  sudo dnf install python3.13 python3-pip")
             print("\nArch:")
             print("  sudo pacman -S python python-pip")
+    
+    def try_git_clone(self) -> bool:
+        """Try to clone using git if available"""
+        print(f"{Colors.BLUE}Checking for git...{Colors.ENDC}")
+        
+        # Check if git is available
+        git_cmd = shutil.which("git")
+        if not git_cmd:
+            print(f"{Colors.WARNING}Git not found, using direct download{Colors.ENDC}")
+            return False
+        
+        print(f"{Colors.GREEN}Git found, cloning repository...{Colors.ENDC}")
+        
+        try:
+            # Git clone with progress
+            result = subprocess.run(
+                ["git", "clone", "--progress", f"{GITHUB_REPO}.git", str(self.install_dir)],
+                capture_output=False,  # Show git's progress output
+                text=True,
+                timeout=300  # 5 minute timeout
+            )
+            
+            if result.returncode == 0:
+                print(f"{Colors.GREEN}✅ Repository cloned successfully{Colors.ENDC}")
+                return True
+            else:
+                print(f"{Colors.WARNING}Git clone failed, trying direct download{Colors.ENDC}")
+                return False
+                
+        except subprocess.TimeoutExpired:
+            print(f"{Colors.WARNING}Git clone timed out, trying direct download{Colors.ENDC}")
+            return False
+        except Exception as e:
+            print(f"{Colors.WARNING}Git clone error: {e}{Colors.ENDC}")
+            return False
     
     def download_from_github(self) -> bool:
         """Download latest code from GitHub"""
@@ -173,27 +265,59 @@ class Installer:
                 temp_path = Path(temp_dir)
                 zip_path = temp_path / "nmc-mcp-server.zip"
                 
-                # Download with progress indicator
-                def download_progress(block_num, block_size, total_size):
-                    downloaded = block_num * block_size
-                    percent = min(downloaded * 100 / total_size, 100)
-                    bar_length = 40
-                    filled = int(bar_length * percent / 100)
-                    bar = '█' * filled + '-' * (bar_length - filled)
-                    print(f'\rDownloading: |{bar}| {percent:.1f}%', end='', flush=True)
                 
                 print(f"Downloading from: {GITHUB_ARCHIVE}")
-                urllib.request.urlretrieve(
-                    GITHUB_ARCHIVE, 
-                    zip_path,
-                    reporthook=download_progress
-                )
-                print()  # New line after progress bar
+                print("This may take a moment...")
+                
+                # For Windows or quiet mode, minimize output
+                if self.os_type == "Windows" or self.args.quiet:
+                    # Simple download without progress on Windows
+                    try:
+                        print("Downloading... ", end='', flush=True)
+                        urllib.request.urlretrieve(GITHUB_ARCHIVE, zip_path)
+                        print("Done!")
+                    except Exception as e:
+                        print(f"Failed: {e}")
+                        raise
+                else:
+                    # Progress bar for Unix-like systems
+                    urllib.request.urlretrieve(
+                        GITHUB_ARCHIVE, 
+                        zip_path
+                    )
+                    print()  # New line after progress bar
                 
                 # Extract zip file
                 print(f"{Colors.BLUE}📦 Extracting files...{Colors.ENDC}")
-                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                    zip_ref.extractall(temp_path)
+                
+                # For Windows or quiet mode, extract quietly to avoid console overflow
+                if self.os_type == "Windows" or self.args.quiet:
+                    print("Extracting archive... ", end='', flush=True)
+                    try:
+                        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                            # Get total number of files
+                            total_files = len(zip_ref.namelist())
+                            
+                            # Extract without verbose output
+                            zip_ref.extractall(temp_path)
+                        
+                        print(f"Done! ({total_files} files)")
+                    except Exception as e:
+                        print(f"Failed: {e}")
+                        raise
+                else:
+                    # More verbose extraction for Unix-like systems
+                    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                        total_files = len(zip_ref.namelist())
+                        print(f"Extracting {total_files} files...")
+                        
+                        # Extract with simple progress
+                        for i, file in enumerate(zip_ref.namelist()):
+                            if i % 10 == 0:  # Update every 10 files
+                                print(f'\rExtracting: {i}/{total_files} files', end='', flush=True)
+                            zip_ref.extract(file, temp_path)
+                        
+                        print(f'\rExtracted: {total_files}/{total_files} files - Done!')
                 
                 # Find the extracted directory (GitHub adds -main suffix)
                 extracted_dirs = [d for d in temp_path.iterdir() if d.is_dir()]
@@ -203,13 +327,19 @@ class Installer:
                 source_dir = extracted_dirs[0]
                 
                 # Move files to installation directory
+                print("Installing files... ", end='', flush=True)
+                files_copied = 0
                 for item in source_dir.iterdir():
                     dest = self.install_dir / item.name
                     if item.is_dir():
                         shutil.copytree(item, dest, dirs_exist_ok=True)
+                        # Count files in directory
+                        files_copied += sum(1 for _ in item.rglob('*') if _.is_file())
                     else:
                         shutil.copy2(item, dest)
+                        files_copied += 1
                 
+                print(f"Done! ({files_copied} files installed)")
                 print(f"{Colors.GREEN}✅ Downloaded to: {self.install_dir}{Colors.ENDC}")
                 return True
                 
@@ -225,13 +355,93 @@ class Installer:
         
         self.venv_path = self.install_dir / "venv"
         
+        # First, ensure the venv module is available
         try:
-            # Create virtual environment
-            subprocess.run(
-                [self.python_cmd, "-m", "venv", str(self.venv_path)],
-                check=True,
-                capture_output=True
+            # Check if venv module exists
+            result = subprocess.run(
+                [self.python_cmd, "-c", "import venv"],
+                capture_output=True,
+                text=True,
+                timeout=10
             )
+            
+            if result.returncode != 0:
+                print(f"{Colors.WARNING}⚠️ venv module not found. Attempting to install...{Colors.ENDC}")
+                
+                # Try to install venv (on some systems it's separate)
+                if self.os_type == "Windows":
+                    print("On Windows, venv should be included with Python.")
+                    print("Try reinstalling Python from python.org with standard library included.")
+                else:
+                    print("Try: sudo apt-get install python3-venv (Ubuntu/Debian)")
+                    print("Or: sudo dnf install python3-venv (Fedora)")
+                
+                # Try using virtualenv as fallback
+                print(f"\n{Colors.BLUE}Trying virtualenv as fallback...{Colors.ENDC}")
+                try:
+                    subprocess.run(
+                        [self.python_cmd, "-m", "pip", "install", "virtualenv"],
+                        capture_output=True,
+                        text=True,
+                        timeout=60
+                    )
+                    
+                    result = subprocess.run(
+                        [self.python_cmd, "-m", "virtualenv", str(self.venv_path)],
+                        capture_output=True,
+                        text=True,
+                        timeout=60
+                    )
+                    
+                    if result.returncode == 0:
+                        print(f"{Colors.GREEN}✅ Created virtual environment using virtualenv{Colors.ENDC}")
+                    else:
+                        raise Exception("virtualenv also failed")
+                        
+                except Exception as e:
+                    print(f"{Colors.RED}Could not create virtual environment: {e}{Colors.ENDC}")
+                    print(f"\n{Colors.YELLOW}Proceeding without virtual environment...{Colors.ENDC}")
+                    print("Dependencies will be installed globally.")
+                    
+                    # Use global Python
+                    return self.setup_without_venv()
+        except Exception as e:
+            print(f"{Colors.WARNING}Could not verify venv module: {e}{Colors.ENDC}")
+        
+        # Try to create virtual environment
+        try:
+            print("Creating virtual environment...")
+            
+            # Clear any existing broken venv
+            if self.venv_path.exists():
+                print("Removing existing venv directory...")
+                shutil.rmtree(self.venv_path, ignore_errors=True)
+            
+            # Create venv with explicit options for better compatibility
+            result = subprocess.run(
+                [self.python_cmd, "-m", "venv", str(self.venv_path), "--clear"],
+                capture_output=True,
+                text=True,
+                timeout=120  # Increased timeout
+            )
+            
+            if result.returncode != 0:
+                print(f"{Colors.RED}venv creation failed with error:{Colors.ENDC}")
+                print(f"STDOUT: {result.stdout}")
+                print(f"STDERR: {result.stderr}")
+                
+                # Try without extra options
+                print(f"{Colors.BLUE}Trying simplified venv creation...{Colors.ENDC}")
+                result = subprocess.run(
+                    [self.python_cmd, "-m", "venv", str(self.venv_path)],
+                    capture_output=True,
+                    text=True,
+                    timeout=120
+                )
+                
+                if result.returncode != 0:
+                    print(f"{Colors.RED}Still failed: {result.stderr}{Colors.ENDC}")
+                    return self.setup_without_venv()
             
             # Get venv Python and pip paths
             if self.os_type == "Windows":
@@ -241,23 +451,41 @@ class Installer:
                 venv_python = self.venv_path / "bin" / "python"
                 venv_pip = self.venv_path / "bin" / "pip"
             
+            # Verify venv was created
+            if not venv_python.exists():
+                print(f"{Colors.RED}Virtual environment not created properly{Colors.ENDC}")
+                return self.setup_without_venv()
+            
             # Upgrade pip
             print(f"{Colors.BLUE}📦 Upgrading pip...{Colors.ENDC}")
-            subprocess.run(
+            result = subprocess.run(
                 [str(venv_python), "-m", "pip", "install", "--upgrade", "pip"],
-                check=True,
-                capture_output=True
+                capture_output=True,
+                text=True,
+                timeout=60
             )
+            
+            if result.returncode != 0:
+                print(f"{Colors.WARNING}Could not upgrade pip: {result.stderr}{Colors.ENDC}")
             
             # Install requirements
             requirements_file = self.install_dir / "requirements.txt"
             if requirements_file.exists():
                 print(f"{Colors.BLUE}📦 Installing dependencies...{Colors.ENDC}")
-                subprocess.run(
-                    [str(venv_pip), "install", "-r", str(requirements_file)],
-                    check=True,
-                    capture_output=True
+                print("This may take a few minutes...")
+                
+                result = subprocess.run(
+                    [str(venv_python), "-m", "pip", "install", "-r", str(requirements_file)],
+                    capture_output=True,
+                    text=True,
+                    timeout=300  # 5 minutes timeout
                 )
+                
+                if result.returncode != 0:
+                    print(f"{Colors.RED}Failed to install dependencies:{Colors.ENDC}")
+                    print(result.stderr)
+                    return False
+                    
                 print(f"{Colors.GREEN}✅ Dependencies installed{Colors.ENDC}")
             else:
                 print(f"{Colors.WARNING}⚠️  No requirements.txt found{Colors.ENDC}")
@@ -265,38 +493,121 @@ class Installer:
             self.python_cmd = str(venv_python)
             return True
             
-        except subprocess.CalledProcessError as e:
-            print(f"{Colors.RED}❌ Failed to setup virtual environment: {e}{Colors.ENDC}")
+        except subprocess.TimeoutExpired:
+            print(f"{Colors.RED}❌ Installation timed out{Colors.ENDC}")
             return False
+        except Exception as e:
+            print(f"{Colors.RED}❌ Failed to setup virtual environment: {e}{Colors.ENDC}")
+            return self.setup_without_venv()
+    
+    def setup_without_venv(self) -> bool:
+        """Setup without virtual environment - install globally"""
+        print(f"\n{Colors.YELLOW}Installing without virtual environment...{Colors.ENDC}")
+        
+        response = ""
+        if not self.args.non_interactive:
+            print(f"{Colors.WARNING}This will install packages globally.{Colors.ENDC}")
+            print("Continue? (y/n): ", end='', flush=True)
+            try:
+                response = input().lower().strip()
+            except:
+                response = "n"
+        else:
+            response = "y"  # Auto-yes in non-interactive mode
+        
+        if response != 'y':
+            print(f"{Colors.RED}Installation cancelled{Colors.ENDC}")
+            return False
+        
+        # Install requirements globally
+        requirements_file = self.install_dir / "requirements.txt"
+        if requirements_file.exists():
+            print(f"{Colors.BLUE}📦 Installing dependencies globally...{Colors.ENDC}")
+            
+            result = subprocess.run(
+                [self.python_cmd, "-m", "pip", "install", "-r", str(requirements_file)],
+                capture_output=True,
+                text=True,
+                timeout=300
+            )
+            
+            if result.returncode != 0:
+                print(f"{Colors.RED}Failed to install dependencies:{Colors.ENDC}")
+                print(result.stderr)
+                return False
+                
+            print(f"{Colors.GREEN}✅ Dependencies installed globally{Colors.ENDC}")
+        
+        # Keep using the same Python command
+        # Don't change self.python_cmd since we're using the system Python
+        return True
     
     def configure_nmc(self) -> bool:
         """Configure NMC connection settings"""
         print(f"\n{Colors.HEADER}🔐 NMC Configuration{Colors.ENDC}")
-        print("Enter your NMC connection details:\n")
         
-        # Get NMC URL
-        nmc_url = input("NMC Server URL (e.g., https://nmc.company.com): ").strip()
-        if not nmc_url:
-            print(f"{Colors.RED}❌ NMC URL is required{Colors.ENDC}")
-            return False
+        # Check if credentials provided via command line
+        if self.args.nmc_url and self.args.username and self.args.password:
+            nmc_url = self.args.nmc_url
+            username = self.args.username
+            password = self.args.password
+            verify_ssl = False
+            print(f"Using provided credentials for {nmc_url}")
+        elif self.args.non_interactive:
+            print(f"{Colors.WARNING}Non-interactive mode: Creating sample .env file{Colors.ENDC}")
+            self.create_sample_env()
+            return True
+        else:
+            print("Enter your NMC connection details:\n")
+            
+            try:
+                # Check if we're in interactive mode
+                if not (hasattr(sys.stdin, 'isatty') and sys.stdin.isatty()):
+                    print(f"{Colors.WARNING}Non-interactive mode detected.{Colors.ENDC}")
+                    print("Please create .env file manually with your NMC credentials.")
+                    self.create_sample_env()
+                    return True
+                
+                # Get NMC URL
+                print("NMC Server URL (e.g., https://nmc.company.com): ", end='', flush=True)
+                nmc_url = input().strip()
+                if not nmc_url:
+                    print(f"\n{Colors.RED}❌ NMC URL is required{Colors.ENDC}")
+                    return False
+                
+                # Ensure URL has protocol
+                if not nmc_url.startswith(('http://', 'https://')):
+                    nmc_url = f"https://{nmc_url}"
+                
+                # Get credentials
+                print("NMC Username: ", end='', flush=True)
+                username = input().strip()
+                if not username:
+                    print(f"\n{Colors.RED}❌ Username is required{Colors.ENDC}")
+                    return False
+                
+                # Use getpass for password
+                password = getpass.getpass("NMC Password: ")
+                if not password:
+                    print(f"{Colors.RED}❌ Password is required{Colors.ENDC}")
+                    return False
+                
+                # SSL verification
+                print("Verify SSL certificate? (y/n) [n]: ", end='', flush=True)
+                verify_ssl = input().lower()
+                
+            except (EOFError, KeyboardInterrupt):
+                print(f"\n{Colors.WARNING}Configuration interrupted. Creating sample .env file...{Colors.ENDC}")
+                self.create_sample_env()
+                return True
+            except Exception as e:
+                print(f"\n{Colors.RED}Error during configuration: {e}{Colors.ENDC}")
+                self.create_sample_env()
+                return True
         
         # Ensure URL has protocol
         if not nmc_url.startswith(('http://', 'https://')):
             nmc_url = f"https://{nmc_url}"
-        
-        # Get credentials
-        username = input("NMC Username: ").strip()
-        if not username:
-            print(f"{Colors.RED}❌ Username is required{Colors.ENDC}")
-            return False
-        
-        password = getpass.getpass("NMC Password: ")
-        if not password:
-            print(f"{Colors.RED}❌ Password is required{Colors.ENDC}")
-            return False
-        
-        # SSL verification
-        verify_ssl = input("Verify SSL certificate? (y/n) [n]: ").lower() == 'y'
         
         # Create .env file
         env_file = self.install_dir / ".env"
@@ -325,150 +636,708 @@ API_TIMEOUT=30.0
             print(f"{Colors.RED}❌ Failed to save configuration: {e}{Colors.ENDC}")
             return False
     
+    def create_sample_env(self):
+        """Create a sample .env file for manual configuration"""
+        sample_env = self.install_dir / ".env.example"
+        env_content = """# NMC API Configuration
+# Edit this file and rename to .env
+
+API_BASE_URL="https://your-nmc-server.com"
+NMC_USERNAME="your-username"
+NMC_PASSWORD="your-password"
+VERIFY_SSL=false
+API_TIMEOUT=30.0
+"""
+        try:
+            sample_env.write_text(env_content)
+            print(f"{Colors.YELLOW}📝 Created sample configuration: {sample_env}{Colors.ENDC}")
+            print(f"   Edit this file with your credentials and rename to .env")
+        except Exception as e:
+            print(f"{Colors.RED}Failed to create sample config: {e}{Colors.ENDC}")
+
     def test_connection(self) -> bool:
-        """Test NMC connection"""
-        print(f"\n{Colors.BLUE}🔍 Testing NMC connection...{Colors.ENDC}")
+        """Test NMC connection using the login API"""
+        print(f"\n{Colors.BLUE}🔍 Testing NMC connection and credentials...{Colors.ENDC}")
         
-        test_script = self.install_dir / "test_connection.py"
-        if not test_script.exists():
-            # Create a simple test script
-            test_code = '''
-import os
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent))
-
-import asyncio
-from dotenv import load_dotenv
-load_dotenv()
-
-async def test():
-    try:
-        from api.base_client import BaseAPIClient
-        from config.settings import config
+        # Load the .env file to get credentials
+        env_file = self.install_dir / ".env"
+        if not env_file.exists():
+            print(f"{Colors.WARNING}⚠️  No .env file found, skipping connection test{Colors.ENDC}")
+            return True
         
-        client = BaseAPIClient(config.api_config)
-        # Try a simple API call
-        response = await client.get("/api/v1.2/auth/")
-        print("✅ Connection successful!")
-        return True
-    except Exception as e:
-        print(f"❌ Connection failed: {e}")
-        return False
-
-asyncio.run(test())
-'''
-            test_script.write_text(test_code)
+        # Parse the .env file
+        nmc_url = username = password = None
+        verify_ssl = False
+        
+        with open(env_file, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith('API_BASE_URL='):
+                    nmc_url = line.split('=', 1)[1].strip().strip('"')
+                elif line.startswith('NMC_USERNAME='):
+                    username = line.split('=', 1)[1].strip().strip('"')
+                elif line.startswith('NMC_PASSWORD='):
+                    password = line.split('=', 1)[1].strip().strip('"')
+                elif line.startswith('VERIFY_SSL='):
+                    verify_ssl = line.split('=', 1)[1].strip().lower() == 'true'
+        
+        if not all([nmc_url, username, password]):
+            print(f"{Colors.WARNING}Missing credentials in .env file{Colors.ENDC}")
+            return True
+        
+        # Test login
+        login_url = f"{nmc_url}/api/v1.2/auth/login/"
+        print(f"Testing login to: {nmc_url}")
+        print(f"Username: {username}")
+        
+        # Create JSON payload
+        import json
+        payload = json.dumps({"username": username, "password": password})
         
         try:
+            # Use curl for macOS/Linux
+            curl_cmd = [
+                "curl", "-i", "-X", "POST",
+                login_url,
+                "-H", "Content-Type: application/json",
+                "-d", payload
+            ]
+            
+            if not verify_ssl:
+                curl_cmd.insert(1, "-k")
+            
             result = subprocess.run(
-                [self.python_cmd, str(test_script)],
+                curl_cmd,
                 capture_output=True,
                 text=True,
-                cwd=self.install_dir
+                timeout=10
             )
             
-            print(result.stdout)
-            if result.stderr:
-                print(f"{Colors.WARNING}{result.stderr}{Colors.ENDC}")
-            
-            return "successful" in result.stdout
-            
+            # Check for success indicators
+            if "200 OK" in result.stdout or "token" in result.stdout.lower():
+                print(f"{Colors.GREEN}✅ Login successful!{Colors.ENDC}")
+                return True
+            elif "401" in result.stdout:
+                print(f"{Colors.RED}❌ Login failed: Invalid credentials{Colors.ENDC}")
+                return False
+            else:
+                print(f"{Colors.WARNING}⚠️  Unexpected response{Colors.ENDC}")
+                return False
+                    
         except Exception as e:
             print(f"{Colors.WARNING}⚠️  Could not test connection: {e}{Colors.ENDC}")
-            print("You can test manually after installation")
-            return True  # Continue anyway
+            return True  # Don't block installation
+
+
     
-    def configure_claude_desktop(self) -> bool:
-        """Configure Claude Desktop to use the MCP server"""
-        print(f"\n{Colors.BLUE}🤖 Configuring Claude Desktop...{Colors.ENDC}")
+    def check_claude_desktop(self) -> Tuple[bool, List[str], List[Path]]:
+        """
+        Enhanced Claude Desktop detection
+        Returns: (is_installed, app_locations, config_paths)
+        """
+        claude_installed = False
+        claude_locations = []
+        possible_config_paths = []
         
-        # Find Claude Desktop config file
         if self.os_type == "Darwin":  # macOS
-            config_paths = [
-                self.home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json",
-                self.home / ".claude" / "claude_desktop_config.json"
+            # Application locations
+            app_locations = [
+                Path("/Applications/Claude.app"),
+                self.home / "Applications" / "Claude.app",
+                Path("/System/Applications/Claude.app"),
+                # Additional possible locations
+                Path("/Applications/Setapp/Claude.app"),  # Setapp installation
+                self.home / "Applications" / "Setapp" / "Claude.app",
             ]
-        elif self.os_type == "Windows":
-            config_paths = [
-                self.home / "AppData" / "Roaming" / "Claude" / "claude_desktop_config.json",
-                Path(os.getenv("APPDATA", "")) / "Claude" / "claude_desktop_config.json"
-            ]
-        else:  # Linux
-            config_paths = [
-                self.home / ".config" / "Claude" / "claude_desktop_config.json",
-                self.home / ".claude" / "claude_desktop_config.json"
-            ]
-        
-        config_file = None
-        for path in config_paths:
-            if path.parent.exists():
-                config_file = path
-                break
-        
-        if not config_file:
-            print(f"{Colors.WARNING}⚠️  Claude Desktop config directory not found{Colors.ENDC}")
-            print(f"\nPlease add this to your Claude Desktop config manually:")
-            self.print_manual_config()
-            return False
-        
-        # Create config directory if it doesn't exist
-        config_file.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Load existing config or create new
-        if config_file.exists():
-            try:
-                with open(config_file, 'r') as f:
-                    config = json.load(f)
-            except:
-                config = {}
-        else:
-            config = {}
-        
-        # Add our MCP server
-        if "mcpServers" not in config:
-            config["mcpServers"] = {}
-        
-        # Determine main.py path
-        main_py = self.install_dir / "main.py"
-        
-        config["mcpServers"]["nmc-mcp-server"] = {
-            "command": self.python_cmd,
-            "args": [str(main_py)]
-        }
-        
-        # Save config
-        try:
-            with open(config_file, 'w') as f:
-                json.dump(config, f, indent=2)
             
-            print(f"{Colors.GREEN}✅ Claude Desktop configured successfully{Colors.ENDC}")
-            print(f"   Config file: {config_file}")
+            for loc in app_locations:
+                if loc.exists():
+                    claude_installed = True
+                    claude_locations.append(str(loc))
+            
+            # Config file locations
+            possible_config_paths = [
+                self.home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json",
+                self.home / ".claude" / "claude_desktop_config.json",
+                self.home / "Library" / "Preferences" / "Claude" / "claude_desktop_config.json",
+                # Additional fallback locations
+                self.home / ".config" / "claude" / "claude_desktop_config.json",
+                self.home / ".config" / "Claude" / "claude_desktop_config.json",
+            ]
+                    
+        elif self.os_type == "Windows":
+            # Check various Windows installation paths
+            program_locations = []
+            
+            # Standard Program Files locations
+            if os.environ.get("PROGRAMFILES"):
+                program_locations.append(Path(os.environ["PROGRAMFILES"]) / "Claude")
+            if os.environ.get("PROGRAMFILES(X86)"):
+                program_locations.append(Path(os.environ["PROGRAMFILES(X86)"]) / "Claude")
+            
+            # User-specific installations
+            if os.environ.get("LOCALAPPDATA"):
+                local_appdata = Path(os.environ["LOCALAPPDATA"])
+                program_locations.extend([
+                    local_appdata / "Claude",
+                    local_appdata / "Programs" / "Claude",
+                    local_appdata / "Microsoft" / "WindowsApps" / "Claude",
+                    local_appdata /"AnthropicClaude",    # MS Store apps
+                ])
+
+            # User-specific installations
+            if os.environ.get("APPDATA"):
+                local_appdata = Path(os.environ["APPDATA"])
+                program_locations.extend([
+                    local_appdata / "Local"/"AnthropicClaude",
+                ])
+            
+            # Check for Claude executable
+            for base in program_locations:
+                if base.exists():
+                    # Check for various executable names
+                    for exe_name in ["Claude.exe", "claude.exe", "Claude Desktop.exe"]:
+                        claude_exe = base / exe_name
+                        if claude_exe.exists():
+                            claude_installed = True
+                            claude_locations.append(str(claude_exe))
+                            break
+            
+            # Also check if Claude is in PATH
+            claude_in_path = shutil.which("claude") or shutil.which("Claude")
+            if claude_in_path:
+                claude_installed = True
+                claude_locations.append(claude_in_path)
+            
+            # Check Start Menu for shortcuts (indicates installation)
+            if os.environ.get("APPDATA"):
+                start_menu_locations = [
+                    Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Claude.lnk",
+                    Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Claude" / "Claude.lnk",
+                ]
+                for shortcut in start_menu_locations:
+                    if shortcut.exists():
+                        claude_installed = True
+                        if str(shortcut) not in claude_locations:
+                            claude_locations.append(str(shortcut))
+            
+            # Config file locations for Windows
+            possible_config_paths = [
+                Path(os.environ.get("APPDATA", self.home / "AppData" / "Roaming")) / "Claude" / "claude_desktop_config.json",
+                Path(os.environ.get("LOCALAPPDATA", self.home / "AppData" / "Local")) / "Claude" / "claude_desktop_config.json",
+                self.home / ".claude" / "claude_desktop_config.json",
+                # Additional possible locations
+                Path(os.environ.get("USERPROFILE", self.home)) / ".claude" / "claude_desktop_config.json",
+                Path(os.environ.get("PROGRAMDATA", "C:\\ProgramData")) / "Claude" / "claude_desktop_config.json",
+            ]
+            
+        else:  # Linux
+            # Check various Linux installation methods
+            
+            # Desktop file locations (indicates proper installation)
+            desktop_files = [
+                self.home / ".local" / "share" / "applications" / "claude.desktop",
+                self.home / ".local" / "share" / "applications" / "claude-desktop.desktop",
+                Path("/usr/share/applications/claude.desktop"),
+                Path("/usr/share/applications/claude-desktop.desktop"),
+                Path("/usr/local/share/applications/claude.desktop"),
+                Path("/var/lib/flatpak/exports/share/applications/com.anthropic.claude.desktop"),  # Flatpak
+                self.home / ".local/share/flatpak/exports/share/applications/com.anthropic.claude.desktop",  # User Flatpak
+                Path("/var/lib/snapd/desktop/applications/claude.desktop"),  # Snap
+            ]
+            
+            for loc in desktop_files:
+                if loc.exists():
+                    claude_installed = True
+                    claude_locations.append(str(loc))
+            
+            # Check for binary in common locations
+            binary_locations = [
+                "/usr/bin/claude",
+                "/usr/local/bin/claude",
+                "/opt/claude/claude",
+                "/opt/Claude/Claude",
+                str(self.home / ".local" / "bin" / "claude"),
+                "/snap/bin/claude",  # Snap installation
+                "/var/lib/flatpak/app/com.anthropic.claude/current/active/files/bin/claude",  # Flatpak
+            ]
+            
+            for binary_path in binary_locations:
+                if Path(binary_path).exists():
+                    claude_installed = True
+                    claude_locations.append(binary_path)
+            
+            # Check if claude is in PATH
+            claude_bin = shutil.which("claude") or shutil.which("Claude")
+            if claude_bin:
+                claude_installed = True
+                if claude_bin not in claude_locations:
+                    claude_locations.append(claude_bin)
+            
+            # AppImage check
+            downloads_dir = self.home / "Downloads"
+            if downloads_dir.exists():
+                for appimage in downloads_dir.glob("*laude*.AppImage"):
+                    if appimage.is_file() and os.access(appimage, os.X_OK):
+                        claude_installed = True
+                        claude_locations.append(str(appimage))
+            
+            # Config file locations for Linux
+            possible_config_paths = [
+                self.home / ".config" / "Claude" / "claude_desktop_config.json",
+                self.home / ".config" / "claude" / "claude_desktop_config.json",
+                self.home / ".claude" / "claude_desktop_config.json",
+                # Flatpak config location
+                self.home / ".var" / "app" / "com.anthropic.claude" / "config" / "Claude" / "claude_desktop_config.json",
+                # Snap config location
+                self.home / "snap" / "claude" / "current" / ".config" / "Claude" / "claude_desktop_config.json",
+                # Additional fallback locations
+                self.home / ".local" / "share" / "Claude" / "claude_desktop_config.json",
+                self.home / ".local" / "config" / "Claude" / "claude_desktop_config.json",
+            ]
+        
+        # Remove duplicates while preserving order
+        claude_locations = list(dict.fromkeys(claude_locations))
+        
+        return claude_installed, claude_locations, possible_config_paths
+
+    def find_claude_config_file(self, possible_paths: List[Path]) -> Optional[Path]:
+        """
+        Find the Claude Desktop config file from a list of possible paths
+        Returns the first existing config file or the most likely location to create one
+        """
+        # First, check if any config file already exists
+        for path in possible_paths:
+            if path.exists():
+                print(f"{Colors.GREEN}✅ Found existing config: {path}{Colors.ENDC}")
+                return path
+        
+        # If no config exists, find the first path where the parent directory exists
+        # (Claude has been run and created its config directory)
+        for path in possible_paths:
+            if path.parent.exists():
+                print(f"{Colors.BLUE}📝 Will create config at: {path}{Colors.ENDC}")
+                return path
+        
+        # If no parent directories exist, use the most likely default location
+        # and create the directory structure
+        default_path = possible_paths[0]
+        print(f"{Colors.YELLOW}📁 Creating config directory: {default_path.parent}{Colors.ENDC}")
+        try:
+            default_path.parent.mkdir(parents=True, exist_ok=True)
+            return default_path
+        except Exception as e:
+            print(f"{Colors.RED}❌ Could not create config directory: {e}{Colors.ENDC}")
+            return None
+
+
+    def safe_update_claude_config(self, config_file: Path, new_server_config: Dict) -> bool:
+        """
+        Safely update Claude Desktop config without removing existing configurations
+        """
+        try:
+            # Load existing config or create new
+            if config_file.exists():
+                # Create backup first
+                backup_file = config_file.with_suffix('.json.backup')
+                shutil.copy2(config_file, backup_file)
+                print(f"{Colors.BLUE}📋 Created backup: {backup_file}{Colors.ENDC}")
+                
+                with open(config_file, 'r', encoding='utf-8') as f:
+                    try:
+                        config = json.load(f)
+                        print(f"{Colors.GREEN}✅ Loaded existing config{Colors.ENDC}")
+                    except json.JSONDecodeError as e:
+                        print(f"{Colors.WARNING}⚠️ Invalid JSON in config file, creating new config{Colors.ENDC}")
+                        print(f"   Error: {e}")
+                        config = {}
+            else:
+                print(f"{Colors.BLUE}📝 Creating new config file{Colors.ENDC}")
+                config = {}
+            
+            # Ensure mcpServers section exists
+            if "mcpServers" not in config:
+                config["mcpServers"] = {}
+                print(f"{Colors.BLUE}➕ Added mcpServers section{Colors.ENDC}")
+            
+            # Check if nmc-mcp-server already exists
+            if "nmc-mcp-server" in config["mcpServers"]:
+                old_config = config["mcpServers"]["nmc-mcp-server"]
+                print(f"{Colors.WARNING}⚠️ Found existing nmc-mcp-server configuration{Colors.ENDC}")
+                print(f"   Current command: {old_config.get('command', 'N/A')}")
+                print(f"   Current path: {old_config.get('args', ['N/A'])[0] if old_config.get('args') else 'N/A'}")
+                print(f"   New command: {new_server_config['command']}")
+                print(f"   New path: {new_server_config.get('args', ['N/A'])[0] if new_server_config.get('args') else 'N/A'}")
+                
+                # Check if configurations are identical
+                if old_config == new_server_config:
+                    print(f"{Colors.GREEN}✅ Configuration is already up to date{Colors.ENDC}")
+                    return True
+                
+                # Ask user what to do (if not in non-interactive mode)
+                if not self.args.non_interactive:
+                    print(f"\n{Colors.YELLOW}What would you like to do?{Colors.ENDC}")
+                    print("1. Replace with new configuration (recommended for updates)")
+                    print("2. Keep existing configuration")
+                    print("3. Save as 'nmc-mcp-server-new' (keep both)")
+                    
+                    try:
+                        choice = input("Choice [1]: ").strip() or "1"
+                    except (EOFError, KeyboardInterrupt):
+                        print(f"\n{Colors.WARNING}Keeping existing configuration{Colors.ENDC}")
+                        return True
+                    
+                    if choice == "2":
+                        print(f"{Colors.GREEN}✅ Keeping existing configuration{Colors.ENDC}")
+                        return True
+                    elif choice == "3":
+                        # Save with different name
+                        alternative_name = "nmc-mcp-server-new"
+                        counter = 1
+                        while f"{alternative_name}" in config["mcpServers"]:
+                            counter += 1
+                            alternative_name = f"nmc-mcp-server-{counter}"
+                        
+                        config["mcpServers"][alternative_name] = new_server_config
+                        print(f"{Colors.GREEN}✅ Added as '{alternative_name}' (keeping both){Colors.ENDC}")
+                    else:
+                        # Replace (default)
+                        print(f"{Colors.BLUE}📝 Replacing existing configuration...{Colors.ENDC}")
+                        config["mcpServers"]["nmc-mcp-server"] = new_server_config
+                else:
+                    # Non-interactive mode: show warning but proceed with update
+                    print(f"{Colors.YELLOW}📝 Non-interactive mode: updating configuration{Colors.ENDC}")
+                    config["mcpServers"]["nmc-mcp-server"] = new_server_config
+            else:
+                # No existing config, just add it
+                config["mcpServers"]["nmc-mcp-server"] = new_server_config
+                print(f"{Colors.GREEN}✅ Added nmc-mcp-server configuration{Colors.ENDC}")
+            
+            # Show summary of other configured servers
+            other_servers = [k for k in config["mcpServers"].keys() if k != "nmc-mcp-server"]
+            if other_servers:
+                print(f"{Colors.CYAN}ℹ️ Preserving {len(other_servers)} other MCP server(s):{Colors.ENDC}")
+                for server in other_servers[:5]:  # Show first 5
+                    print(f"   • {server}")
+                if len(other_servers) > 5:
+                    print(f"   ... and {len(other_servers) - 5} more")
+            
+            # Write config with nice formatting
+            with open(config_file, 'w', encoding='utf-8') as f:
+                json.dump(config, f, indent=2, ensure_ascii=False)
+                f.write('\n')  # Add trailing newline for better git compatibility
+            
+            print(f"{Colors.GREEN}✅ Config updated successfully{Colors.ENDC}")
             return True
             
+        except PermissionError:
+            print(f"{Colors.RED}❌ Permission denied writing to config file{Colors.ENDC}")
+            print(f"   Try running with administrator/sudo privileges")
+            return False
         except Exception as e:
-            print(f"{Colors.RED}❌ Failed to update Claude config: {e}{Colors.ENDC}")
-            print(f"\nPlease add this to your Claude Desktop config manually:")
+            print(f"{Colors.RED}❌ Failed to update config: {e}{Colors.ENDC}")
+            return False
+
+    def configure_claude_desktop(self) -> bool:
+        """Enhanced Claude Desktop configuration"""
+        print(f"\n{Colors.BLUE}🤖 Configuring Claude Desktop...{Colors.ENDC}")
+        
+        # Check if Claude Desktop is installed
+        claude_installed, claude_locations, possible_config_paths = self.check_claude_desktop()
+        
+        if not claude_installed:
+            print(f"{Colors.WARNING}⚠️ Claude Desktop not found on this system{Colors.ENDC}")
+            print(f"\n{Colors.HEADER}To complete setup:{Colors.ENDC}")
+            print(f"1. Install Claude Desktop from: {Colors.CYAN}https://claude.ai/download{Colors.ENDC}")
+            print(f"2. Run Claude Desktop at least once")
+            print(f"3. Run this command to configure it:")
+            print(f"   {Colors.GREEN}{self.python_cmd} {self.install_dir}/configure_claude.py{Colors.ENDC}")
+            print(f"\nOr manually add this configuration to Claude Desktop:")
+            self.print_manual_config()
+            self.create_configure_script()
+            return False
+        
+        print(f"{Colors.GREEN}✅ Claude Desktop found at {len(claude_locations)} location(s){Colors.ENDC}")
+        for i, loc in enumerate(claude_locations[:3], 1):  # Show first 3 locations
+            print(f"   {i}. {loc}")
+        if len(claude_locations) > 3:
+            print(f"   ... and {len(claude_locations) - 3} more")
+        
+        # Find the config file
+        config_file = self.find_claude_config_file(possible_config_paths)
+        
+        if not config_file:
+            print(f"{Colors.WARNING}⚠️ Could not determine config file location{Colors.ENDC}")
+            print(f"\n{Colors.HEADER}This might mean:{Colors.ENDC}")
+            print(f"1. Claude Desktop hasn't been run yet")
+            print(f"2. Claude is installed in a non-standard location")
+            print(f"3. Permission issues accessing config directories")
+            print(f"\n{Colors.HEADER}To fix:{Colors.ENDC}")
+            print(f"1. Start Claude Desktop at least once")
+            print(f"2. Run: {Colors.GREEN}{self.python_cmd} {self.install_dir}/configure_claude.py{Colors.ENDC}")
+            print(f"\nOr manually add this configuration to Claude Desktop:")
+            self.print_manual_config()
+            self.create_configure_script()
+            return False
+        
+        # Prepare the MCP server configuration
+        main_py = self.install_dir / "main.py"
+        
+        # Ensure main.py exists
+        if not main_py.exists():
+            print(f"{Colors.RED}❌ main.py not found at {main_py}{Colors.ENDC}")
+            return False
+        
+        new_server_config = {
+            "command": self.python_cmd,
+            "args": [str(main_py)],
+            "cwd": str(self.install_dir),
+            # Optional: Add environment variables if needed
+            # "env": {
+            #     "PYTHONPATH": str(self.install_dir)
+            # }
+        }
+        
+        # Update the config file
+        success = self.safe_update_claude_config(config_file, new_server_config)
+        
+        if success:
+            print(f"\n{Colors.GREEN}✅ Claude Desktop configured successfully!{Colors.ENDC}")
+            print(f"   Config file: {config_file}")
+            print(f"\n{Colors.HEADER}Next steps:{Colors.ENDC}")
+            print(f"1. {Colors.BOLD}Restart Claude Desktop{Colors.ENDC}")
+            print(f"2. Look for 'nmc-mcp-server' in the MCP tools menu")
+            print(f"3. Test by asking: 'List all my filers'")
+
+            global claude_configured 
+            claude_configured = True
+
+            return True
+        else:
+            print(f"\n{Colors.YELLOW}Please add this configuration manually:{Colors.ENDC}")
             self.print_manual_config()
             return False
+
+    def create_configure_script(self):
+        """Create an enhanced standalone script to configure Claude Desktop later"""
+        configure_script = self.install_dir / "configure_claude.py"
+        
+        script_content = f'''#!/usr/bin/env python3
+"""
+Standalone script to configure Claude Desktop for NMC MCP Server
+Run this after installing Claude Desktop
+Enhanced version with better detection and safe config updates
+"""
+
+import json
+import sys
+import shutil
+import platform
+from pathlib import Path
+from typing import Optional, List, Dict, Tuple
+
+def find_claude_desktop() -> Tuple[bool, List[str]]:
+    """Find Claude Desktop installation"""
+    os_type = platform.system()
+    home = Path.home()
+    claude_installed = False
+    claude_locations = []
     
+    if os_type == "Darwin":  # macOS
+        app_locations = [
+            Path("/Applications/Claude.app"),
+            home / "Applications" / "Claude.app",
+            Path("/System/Applications/Claude.app"),
+            Path("/Applications/Setapp/Claude.app"),
+        ]
+        for loc in app_locations:
+            if loc.exists():
+                claude_installed = True
+                claude_locations.append(str(loc))
+                
+    elif os_type == "Windows":
+        import os
+        program_locations = []
+        if os.environ.get("PROGRAMFILES"):
+            program_locations.append(Path(os.environ["PROGRAMFILES"]) / "Claude")
+        if os.environ.get("LOCALAPPDATA"):
+            program_locations.append(Path(os.environ["LOCALAPPDATA"]) / "Claude")
+            program_locations.append(Path(os.environ["LOCALAPPDATA"]) / "Programs" / "Claude")
+        
+        for base in program_locations:
+            if base.exists():
+                for exe_name in ["Claude.exe", "claude.exe"]:
+                    if (base / exe_name).exists():
+                        claude_installed = True
+                        claude_locations.append(str(base / exe_name))
+                        
+    else:  # Linux
+        binary_locations = [
+            "/usr/bin/claude",
+            "/usr/local/bin/claude",
+            "/opt/claude/claude",
+            str(home / ".local" / "bin" / "claude"),
+        ]
+        for path in binary_locations:
+            if Path(path).exists():
+                claude_installed = True
+                claude_locations.append(path)
+    
+    return claude_installed, claude_locations
+
+def get_config_paths() -> List[Path]:
+    """Get possible config file paths"""
+    os_type = platform.system()
+    home = Path.home()
+    
+    if os_type == "Darwin":
+        return [
+            home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json",
+            home / ".claude" / "claude_desktop_config.json",
+        ]
+    elif os_type == "Windows":
+        import os
+        return [
+            Path(os.environ.get("APPDATA", home / "AppData" / "Roaming")) / "Claude" / "claude_desktop_config.json",
+            Path(os.environ.get("LOCALAPPDATA", home / "AppData" / "Local")) / "Claude" / "claude_desktop_config.json",
+        ]
+    else:
+        return [
+            home / ".config" / "Claude" / "claude_desktop_config.json",
+            home / ".config" / "claude" / "claude_desktop_config.json",
+            home / ".claude" / "claude_desktop_config.json",
+        ]
+
+def configure_claude():
+    python_cmd = "{self.python_cmd}"
+    main_py = "{self.install_dir / 'main.py'}"
+    cwd = "{self.install_dir}"
+    
+    # Check if Claude is installed
+    installed, locations = find_claude_desktop()
+    if not installed:
+        print("❌ Claude Desktop not found")
+        print("Please install from: https://claude.ai/download")
+        return False
+    
+    print(f"✅ Claude Desktop found")
+    
+    # Find config file
+    config_paths = get_config_paths()
+    config_file = None
+    
+    for path in config_paths:
+        if path.exists():
+            config_file = path
+            print(f"✅ Found config: {{path}}")
+            break
+        elif path.parent.exists():
+            config_file = path
+            print(f"📝 Will create config at: {{path}}")
+            break
+    
+    if not config_file:
+        # Create directory for first option
+        config_file = config_paths[0]
+        config_file.parent.mkdir(parents=True, exist_ok=True)
+        print(f"📁 Created config directory: {{config_file.parent}}")
+    
+    # Load or create config
+    if config_file.exists():
+        # Backup existing config
+        backup = config_file.with_suffix('.json.backup')
+        shutil.copy2(config_file, backup)
+        print(f"📋 Backed up to: {{backup}}")
+        
+        with open(config_file, 'r', encoding='utf-8') as f:
+            try:
+                config = json.load(f)
+            except:
+                print("⚠️ Invalid JSON, creating new config")
+                config = {{}}
+    else:
+        config = {{}}
+    
+    # Add MCP server (preserving existing servers)
+    if "mcpServers" not in config:
+        config["mcpServers"] = {{}}
+    
+    # Show existing servers
+    existing = [k for k in config["mcpServers"].keys() if k != "nmc-mcp-server"]
+    if existing:
+        print(f"ℹ️ Preserving {{len(existing)}} existing MCP server(s)")
+    
+    config["mcpServers"]["nmc-mcp-server"] = {{
+        "command": python_cmd,
+        "args": [main_py],
+        "cwd": cwd
+    }}
+    
+    # Save config
+    with open(config_file, 'w', encoding='utf-8') as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+        f.write('\\n')
+    
+    print("✅ Claude Desktop configured successfully!")
+    print(f"   Config: {{config_file}}")
+    print("\\n🚀 Please restart Claude Desktop to use NMC tools")
+    return True
+
+if __name__ == "__main__":
+    try:
+        success = configure_claude()
+        sys.exit(0 if success else 1)
+    except Exception as e:
+        print(f"❌ Error: {{e}}")
+        sys.exit(1)
+'''
+        
+        try:
+            configure_script.write_text(script_content, encoding="utf-8")
+            if self.os_type != "Windows":
+                configure_script.chmod(0o755)
+            print(f"{Colors.GREEN}✅ Created configuration script: {configure_script}{Colors.ENDC}")
+        except Exception as e:
+            print(f"{Colors.RED}❌ Failed to create configure script: {e}{Colors.ENDC}")
+
     def print_manual_config(self):
-        """Print manual configuration instructions"""
+        """Print manual configuration instructions with better formatting"""
         main_py = self.install_dir / "main.py"
         
         config_json = {
             "mcpServers": {
                 "nmc-mcp-server": {
                     "command": self.python_cmd,
-                    "args": [str(main_py)]
+                    "args": [str(main_py)],
+                    "cwd": str(self.install_dir)
                 }
             }
         }
         
         print(f"\n{Colors.CYAN}{'='*60}{Colors.ENDC}")
-        print(json.dumps(config_json, indent=2))
+        print(f"{Colors.HEADER}Manual Configuration for claude_desktop_config.json:{Colors.ENDC}")
         print(f"{Colors.CYAN}{'='*60}{Colors.ENDC}")
-    
+        print("\nAdd this to your existing mcpServers section:")
+        print(f"{Colors.YELLOW}")
+        print(json.dumps(config_json["mcpServers"]["nmc-mcp-server"], indent=2))
+        print(f"{Colors.ENDC}")
+        print(f"\nOr if you have no existing config, use this complete file:")
+        print(f"{Colors.YELLOW}")
+        print(json.dumps(config_json, indent=2))
+        print(f"{Colors.ENDC}")
+        print(f"{Colors.CYAN}{'='*60}{Colors.ENDC}")
+        
+        # Show common config locations
+        print(f"\n{Colors.HEADER}Common config file locations:{Colors.ENDC}")
+        if self.os_type == "Darwin":
+            print(f"  • macOS: ~/Library/Application Support/Claude/claude_desktop_config.json")
+        elif self.os_type == "Windows":
+            print(f"  • Windows: %APPDATA%\\Claude\\claude_desktop_config.json")
+            print(f"            (Usually: C:\\Users\\{{username}}\\AppData\\Roaming\\Claude\\)")
+        else:
+            print(f"  • Linux: ~/.config/Claude/claude_desktop_config.json")
+
+
     def create_shortcuts(self):
         """Create convenient shortcuts/commands"""
         print(f"\n{Colors.BLUE}🔗 Creating shortcuts...{Colors.ENDC}")
@@ -504,8 +1373,9 @@ asyncio.run(test())
         print(f"  • NMC URL: {self.config.get('url', 'configured')}")
         
         # Check Claude Desktop status
-        claude_installed, _ = self.check_claude_desktop()
-        
+        #claude_installed, _ = self.check_claude_desktop()
+        claude_installed= claude_configured
+
         if claude_installed:
             print(f"\n{Colors.HEADER}🚀 Next Steps:{Colors.ENDC}")
             print(f"  1. {Colors.BOLD}Restart Claude Desktop{Colors.ENDC}")
@@ -549,11 +1419,13 @@ asyncio.run(test())
             if not self.configure_nmc():
                 return False
             
-            # Step 5: Test connection
-            self.test_connection()  # Optional, don't fail if it doesn't work
+            # Step 5: Test connection (skip in non-interactive mode)
+            if not self.args.non_interactive:
+                self.test_connection()  # Optional, don't fail if it doesn't work
             
-            # Step 6: Configure Claude Desktop
-            self.configure_claude_desktop()
+            # Step 6: Configure Claude Desktop (skip if requested)
+            if not self.args.skip_claude:
+                self.configure_claude_desktop()
             
             # Step 7: Create shortcuts
             self.create_shortcuts()
@@ -567,11 +1439,41 @@ asyncio.run(test())
             return False
         except Exception as e:
             print(f"\n{Colors.RED}Installation failed: {e}{Colors.ENDC}")
+            import traceback
+            traceback.print_exc()
             return False
 
 def main():
     """Main entry point"""
-    installer = Installer()
+    parser = argparse.ArgumentParser(description='NMC MCP Server Universal Installer')
+    parser.add_argument('-d', '--directory', help='Installation directory')
+    parser.add_argument('-n', '--non-interactive', action='store_true', 
+                       help='Run in non-interactive mode (use defaults)')
+    parser.add_argument('--skip-claude', action='store_true',
+                       help='Skip Claude Desktop configuration')
+    parser.add_argument('--use-git', action='store_true',
+                       help='Prefer git clone over ZIP download')
+    parser.add_argument('-q', '--quiet', action='store_true',
+                       help='Minimal output (recommended for Windows console)')
+    parser.add_argument('--nmc-url', help='NMC server URL')
+    parser.add_argument('--username', help='NMC username')
+    parser.add_argument('--password', help='NMC password')
+    
+    args = parser.parse_args()
+    
+    # On Windows, default to quiet mode to prevent crashes
+    if platform.system() == "Windows" and not args.quiet:
+        print("Note: Running in reduced output mode on Windows to prevent console issues.")
+        print("Use --verbose flag if you want detailed output.\n")
+        args.quiet = True
+    
+    # Validate that if credentials are provided, all are provided
+    if any([args.nmc_url, args.username, args.password]):
+        if not all([args.nmc_url, args.username, args.password]):
+            print(f"Error: If providing credentials, you must provide --nmc-url, --username, and --password")
+            sys.exit(1)
+    
+    installer = Installer(args)
     success = installer.run()
     sys.exit(0 if success else 1)
 
