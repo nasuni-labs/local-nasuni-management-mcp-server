@@ -615,6 +615,8 @@ class Installer:
 API_BASE_URL="{nmc_url}"
 NMC_USERNAME="{username}"
 NMC_PASSWORD="{password}"
+API_TOKEN="api_token_here"
+API_TOKEN_EXPIRES= ''
 VERIFY_SSL={str(verify_ssl).lower()}
 API_TIMEOUT=30.0
 """
