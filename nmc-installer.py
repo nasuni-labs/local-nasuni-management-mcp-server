@@ -1424,7 +1424,14 @@ if __name__ == "__main__":
                 self.test_connection()  # Optional, don't fail if it doesn't work
             
             # Step 6: Configure Claude Desktop (skip if requested)
-            if not self.args.skip_claude:
+            # Get confirmation before proceeding
+            proceed_with_claude_setup = input(f"{Colors.YELLOW}Continue with Claude Setup? (y/n): {Colors.ENDC}").lower()
+            
+            if proceed_with_claude_setup  != 'y':
+                print(f"\n{Colors.RED}Skipped Claude Setuo {e}{Colors.ENDC}")
+                return True
+
+            if not self.args.skip_claude and proceed_with_claude_setup == 'y':
                 self.configure_claude_desktop()
             
             # Step 7: Create shortcuts
@@ -1475,6 +1482,7 @@ def main():
     
     installer = Installer(args)
     success = installer.run()
+    input(f"{Colors.YELLOW}Hit enter to exit: {Colors.ENDC}")
     sys.exit(0 if success else 1)
 
 if __name__ == "__main__":
