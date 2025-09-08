@@ -2,6 +2,7 @@
 """Optimized configuration management for the MCP server."""
 
 import os
+import sys
 from typing import Any, Optional, Dict
 from dataclasses import dataclass
 from dotenv import load_dotenv
@@ -50,23 +51,31 @@ class ConfigManager:
         )
     
     def _get_api_token(self) -> Optional[str]:
-        """Get API token from environment or file - called only once."""
-        # Try environment variable first
-        token = os.getenv("API_TOKEN", os.getenv("FILERS_API_TOKEN"))
+        """Get API token from environment or file."""
+        # Try environment variable first (includes .env file via dotenv)
+        token = os.getenv("API_TOKEN") or os.getenv("FILERS_API_TOKEN")
+        
         if token:
+            # Also check if token is expired
+            expires = os.getenv("API_TOKEN_EXPIRES") or os.getenv("FILERS_TOKEN_EXPIRES")
+            if expires:
+                try:
+                    from datetime import datetime, timedelta
+                    expires_clean = expires.replace("UTC", "+00:00")
+                    expires_time = datetime.fromisoformat(expires_clean)
+                    now = datetime.now(expires_time.tzinfo)
+                    
+                    if expires_time > now + timedelta(minutes=10):
+                        # Token is still valid
+                        return token
+                    else:
+                        print(f"Token expired, will need refresh", file=sys.stderr)
+                        return None
+                except:
+                    pass
             return token
         
-        # Try reading from file
-        token_file = os.getenv("API_TOKEN_FILE", os.getenv("FILERS_TOKEN_FILE", "/path/to/your/token.txt"))
-        try:
-            with open(token_file, 'r') as f:
-                return f.read().strip()
-        except FileNotFoundError:
-            print(f"Token file not found: {token_file}")
-            return None
-        except Exception as e:
-            print(f"Error reading token file: {e}")
-            return None
+        return None
     
     def add_api_config(self, name: str) -> APIConfig:
         """Add configuration for a new API - reuses the same config."""

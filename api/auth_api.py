@@ -5,6 +5,7 @@ import sys
 import os
 from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
+from dotenv import set_key
 import httpx
 from api.base_client import BaseAPIClient
 from config.logging_setup import setup_logging, get_logger
@@ -89,12 +90,17 @@ class AuthAPIClient(BaseAPIClient):
                     new_token = result["token"]
                     os.environ["FILERS_API_TOKEN"] = new_token
                     os.environ["API_TOKEN"] = new_token
+
+                    # Save the token to the .env file for persistence
+                    env_file_path = '.env'  # or wherever your .env file is located
+                    set_key(env_file_path, "API_TOKEN", new_token)
+
                     
                     # Also update the config object for immediate use
                     self.config.token = new_token
                     
                     # Update the headers in the base client for subsequent requests
-                    self.headers = self._build_headers(new_token)                    
+                    #self.headers = self._build_headers(new_token)                    
                 else:
                     print(f"❌ Login failed: {result.get('error', 'No token in response')}", file=sys.stderr)
                 
@@ -141,7 +147,7 @@ class AuthAPIClient(BaseAPIClient):
             print(f"✅ Token updated in .env file, expires: {expires}", file=sys.stderr)
             
             # Update the current client's headers
-            self.headers["Authorization"] = f"Token {new_token}"
+            #self.headers["Authorization"] = f"Token {new_token}"
             
             return {
                 "success": True,
@@ -165,32 +171,30 @@ class AuthAPIClient(BaseAPIClient):
         else:
             lines = []
         
-        # Find and update the token line, or add it
-        token_updated = False
-        expires_updated = False
-        new_lines = []
+        # Update or add token and expiration
+        updated_lines = []
+        token_found = False
+        expires_found = False
         
         for line in lines:
-            if line.startswith("FILERS_API_TOKEN="):
-                new_lines.append(f"FILERS_API_TOKEN={new_token}\n")
-                token_updated = True
-            elif line.startswith("FILERS_TOKEN_EXPIRES="):
-                new_lines.append(f"FILERS_TOKEN_EXPIRES={expires}\n")
-                expires_updated = True
+            if line.startswith("API_TOKEN="):
+                updated_lines.append(f"API_TOKEN={new_token}\n")
+                token_found = True
+            elif line.startswith("API_TOKEN_EXPIRES="):
+                updated_lines.append(f"API_TOKEN_EXPIRES={expires}\n")
+                expires_found = True
             else:
-                new_lines.append(line)
+                updated_lines.append(line)
         
-        # Add token if it wasn't found
-        if not token_updated:
-            new_lines.append(f"FILERS_API_TOKEN={new_token}\n")
+        # Add if not found
+        if not token_found:
+            updated_lines.append(f"API_TOKEN={new_token}\n")
+        if not expires_found:
+            updated_lines.append(f"API_TOKEN_EXPIRES={expires}\n")
         
-        # Add expiration if it wasn't found
-        if not expires_updated:
-            new_lines.append(f"FILERS_TOKEN_EXPIRES={expires}\n")
-        
-        # Write back to .env file
+        # Write back
         with open(env_file_path, 'w') as f:
-            f.writelines(new_lines)
+            f.writelines(updated_lines)
     
     def is_token_expired(self) -> bool:
         """Check if the current token is expired or will expire soon."""
