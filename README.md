@@ -103,7 +103,7 @@ There are two options to install and configure the NMC MCP Server:
 The automated installer handles all setup steps including downloading the code, creating virtual environment, installing dependencies, and configuring Claude Desktop.
 
 ### 1. Download the Installer Script
-Download the [nmc-installer.py](https://github.com/nasuni-labs/nasuni-nmc-mcp-desktop-server/blob/main/nmc-installer.py) from the repo. 
+Download the [installer.py](https://github.com/nasuni-labs/nasuni-management-mcp-desktop-server/blob/main/installer.py) from the repo. 
 
 ### 2. Run the Installer 
 
@@ -161,20 +161,20 @@ If Claude Desktop was not installed when you ran the installer:
 
 ```bash
 git clone <repository-url>
-cd nmc-mcp-server
+cd nasuni-management-mcp-desktop-server
 ```
 
 ### 2. Create Virtual Environment (Recommended)
 
 ```bash
 # Create virtual environment
-python3 -m venv nmc-mcp-env
+python3 -m venv nasuni-management-mcp-desktop-server-env
 
 # Activate virtual environment
 # On macOS/Linux:
-source nmc-mcp-env/bin/activate
+source nasuni-management-mcp-desktop-server-env/bin/activate
 # On Windows:
-nmc-mcp-env\Scripts\activate
+asuni-management-mcp-env\Scripts\activate
 ```
 
 ### 3. Install Dependencies
@@ -307,7 +307,7 @@ which python3
 which python
 
 # If using a virtual environment (recommended), activate it first:
-source nmc-mcp-env/bin/activate  # macOS/Linux
+source nasuni-management-mcp-desktop-server/bin/activate  # macOS/Linux
 # nmc-mcp-env\Scripts\activate   # Windows
 which python
 ```
@@ -340,8 +340,8 @@ Add this configuration to your `claude_desktop_config.json`:
 {
   "mcpServers": {
     "nmc-mcp-server": {
-      "command": "/Users/john/Projects/nmc-mcp-server/nmc-mcp-env/bin/python",
-      "args": ["/Users/john/Projects/nmc-mcp-server/main.py"]
+      "command": "/Users/john/Projects/nasuni-management-mcp-desktop-server/nasuni-management-mcp-desktop-server-env/bin/python",
+      "args": ["/Users/john/Projects/nasuni-management-mcp-desktop-server/main.py"]
     }
   }
 }
@@ -353,7 +353,7 @@ Add this configuration to your `claude_desktop_config.json`:
   "mcpServers": {
     "nmc-mcp-server": {
       "command": "/opt/homebrew/bin/python3",
-      "args": ["/Users/john/Projects/nmc-mcp-server/main.py"]
+      "args": ["/Users/john/Projects/nasuni-management-mcp-desktop-server/main.py"]
     }
   }
 }
@@ -419,7 +419,7 @@ To foster further colloboartion, here is project structure and details on how to
 ### Project Structure
 
 ```
-nmc-mcp-server/
+nasuni-management-mcp-server/
 ├── main.py                 # Main entry point and diagnostics
 ├── requirements.txt        # Python dependencies
 ├── .env.example           # Environment configuration template
