@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Nasuni Management MCP Server Universal Installer
+NMC MCP Server Universal Installer
 Works on Windows, macOS, and Linux
 Downloads latest code from GitHub
 """
@@ -24,8 +24,8 @@ import tempfile
 import time
 
 # GitHub repository URL
-GITHUB_REPO = "https://github.com/nasuni-labs/nasuni-management-mcp-desktop-server"
-GITHUB_ARCHIVE = "https://github.com/nasuni-labs/nasuni-management-mcp-desktop-server/archive/refs/heads/main.zip"
+GITHUB_REPO = "https://github.com/nasuni-labs/nasuni-nmc-mcp-desktop-server"
+GITHUB_ARCHIVE = "https://github.com/nasuni-labs/nasuni-nmc-mcp-desktop-server/archive/refs/heads/main.zip"
 
 # ANSI color codes for terminal output
 class Colors:
@@ -51,8 +51,6 @@ class Colors:
         Colors.BOLD = ''
         Colors.YELLOW = ''
 
-
-
 # Handle Windows terminal compatibility
 if platform.system() == 'Windows':
     try:
@@ -61,7 +59,7 @@ if platform.system() == 'Windows':
         kernel32 = ctypes.windll.kernel32
         kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
     except:
-        # If that fails, try colorama
+        # Try colorama
         try:
             import colorama
             colorama.init(autoreset=True)
@@ -73,8 +71,7 @@ else:
     pass
 
 class Installer:
-
-    #boolen to check if claude was successfully configured
+    #boolean to check if claude was successfully configured
     global claude_configured 
     claude_configured = False
 
@@ -103,9 +100,7 @@ class Installer:
             )
         else:
             self.args = args
-        
-
-
+    
     def print_header(self):
         """Print welcome header"""
         try:
@@ -235,7 +230,7 @@ class Installer:
         print(f"\n{Colors.BLUE}📥 Downloading latest version from GitHub...{Colors.ENDC}")
         
         # Choose installation directory
-        default_dir = self.home / "nasuni-management-mcp-server"
+        default_dir = self.home / "nmc-mcp-server"
         install_path = input(f"Installation directory [{default_dir}]: ").strip()
         
         if not install_path:
@@ -263,8 +258,7 @@ class Installer:
             
             with tempfile.TemporaryDirectory() as temp_dir:
                 temp_path = Path(temp_dir)
-                zip_path = temp_path / "nasuni-management-mcp-server.zip"
-                
+                zip_path = temp_path / "nmc-mcp-server.zip"
                 
                 print(f"Downloading from: {GITHUB_ARCHIVE}")
                 print("This may take a moment...")
@@ -542,8 +536,8 @@ class Installer:
         # Don't change self.python_cmd since we're using the system Python
         return True
     
-    def configure_nmc(self) -> bool:
-        """Configure NMC connection settings"""
+    def configure_nmc_with_retry(self) -> bool:
+        """Configure NMC with retry capability for connection testing"""
         print(f"\n{Colors.HEADER}🔐 NMC Configuration{Colors.ENDC}")
         
         # Check if credentials provided via command line
@@ -553,12 +547,26 @@ class Installer:
             password = self.args.password
             verify_ssl = False
             print(f"Using provided credentials for {nmc_url}")
-        elif self.args.non_interactive:
+            
+            # Save credentials and test
+            if self._save_and_test_credentials(nmc_url, username, password, verify_ssl):
+                return True
+            else:
+                print(f"{Colors.WARNING}Command-line credentials failed. Please enter correct credentials.{Colors.ENDC}")
+                # Fall through to interactive mode
+        
+        if self.args.non_interactive:
             print(f"{Colors.WARNING}Non-interactive mode: Creating sample .env file{Colors.ENDC}")
             self.create_sample_env()
             return True
-        else:
-            print("Enter your NMC connection details:\n")
+        
+        # Interactive configuration with retry loop
+        max_attempts = 3
+        attempt = 0
+        
+        while attempt < max_attempts:
+            attempt += 1
+            print(f"\n{Colors.BLUE}Attempt {attempt}/{max_attempts}{Colors.ENDC}")
             
             try:
                 # Check if we're in interactive mode
@@ -573,7 +581,7 @@ class Installer:
                 nmc_url = input().strip()
                 if not nmc_url:
                     print(f"\n{Colors.RED}❌ NMC URL is required{Colors.ENDC}")
-                    return False
+                    continue
                 
                 # Ensure URL has protocol
                 if not nmc_url.startswith(('http://', 'https://')):
@@ -584,23 +592,34 @@ class Installer:
                 username = input().strip()
                 if not username:
                     print(f"\n{Colors.RED}❌ Username is required{Colors.ENDC}")
-                    return False
-                
-                # Normalize AD credentials format (single \ to double \\)
-                if '\\' in username:
-                    # First convert any double backslashes to single, then double all
-                    username = username.replace('\\\\', '\\').replace('\\', '\\\\')
-                    #print(f"Normalized AD username format: {username}")
+                    continue
                 
                 # Use getpass for password
                 password = getpass.getpass("NMC Password: ")
                 if not password:
                     print(f"{Colors.RED}❌ Password is required{Colors.ENDC}")
-                    return False
+                    continue
                 
                 # SSL verification
                 print("Verify SSL certificate? (y/n) [n]: ", end='', flush=True)
-                verify_ssl = input().lower()
+                verify_ssl_input = input().lower().strip()
+                verify_ssl = verify_ssl_input == 'y'
+                
+                # Save and test credentials
+                if self._save_and_test_credentials(nmc_url, username, password, verify_ssl):
+                    return True
+                else:
+                    if attempt < max_attempts:
+                        print(f"\n{Colors.YELLOW}Would you like to try again with different credentials?{Colors.ENDC}")
+                        retry = input("Retry? (y/n) [y]: ").strip().lower()
+                        if retry == 'n':
+                            print(f"{Colors.WARNING}Proceeding with saved credentials (connection test failed){Colors.ENDC}")
+                            return True
+                    else:
+                        print(f"\n{Colors.RED}Maximum attempts reached.{Colors.ENDC}")
+                        print(f"{Colors.YELLOW}Credentials have been saved. You can update them later in:{Colors.ENDC}")
+                        print(f"  {self.install_dir}/.env")
+                        return True
                 
             except (EOFError, KeyboardInterrupt):
                 print(f"\n{Colors.WARNING}Configuration interrupted. Creating sample .env file...{Colors.ENDC}")
@@ -608,9 +627,14 @@ class Installer:
                 return True
             except Exception as e:
                 print(f"\n{Colors.RED}Error during configuration: {e}{Colors.ENDC}")
-                self.create_sample_env()
-                return True
+                if attempt >= max_attempts:
+                    self.create_sample_env()
+                    return True
         
+        return False
+    
+    def _save_and_test_credentials(self, nmc_url: str, username: str, password: str, verify_ssl: bool) -> bool:
+        """Save credentials to .env and test the connection"""
         # Ensure URL has protocol
         if not nmc_url.startswith(('http://', 'https://')):
             nmc_url = f"https://{nmc_url}"
@@ -638,11 +662,87 @@ API_TIMEOUT=30.0
                 'install_dir': str(self.install_dir)
             }
             
-            return True
+            # Test the connection
+            print(f"\n{Colors.BLUE}🔍 Testing NMC connection...{Colors.ENDC}")
+            connection_success = self._test_nmc_connection(nmc_url, username, password, verify_ssl)
+            
+            if connection_success:
+                print(f"{Colors.GREEN}✅ Connection test successful!{Colors.ENDC}")
+                return True
+            else:
+                print(f"{Colors.RED}❌ Connection test failed{Colors.ENDC}")
+                print(f"{Colors.YELLOW}Please check your credentials and URL{Colors.ENDC}")
+                return False
             
         except Exception as e:
             print(f"{Colors.RED}❌ Failed to save configuration: {e}{Colors.ENDC}")
             return False
+    
+    def _test_nmc_connection(self, nmc_url: str, username: str, password: str, verify_ssl: bool) -> bool:
+        """Test NMC connection with given credentials"""
+        login_url = f"{nmc_url}/api/v1.2/auth/login/"
+        print(f"Testing login to: {nmc_url}")
+        print(f"Username: {username}")
+        
+        # Create JSON payload
+        import json
+        payload = json.dumps({"username": username, "password": password})
+        
+        try:
+            # Try using urllib first (more universal)
+            import urllib.request
+            import ssl
+            
+            # Prepare the request
+            data = payload.encode('utf-8')
+            headers = {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            }
+            
+            req = urllib.request.Request(login_url, data=data, headers=headers)
+            
+            # Handle SSL verification
+            if not verify_ssl:
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+            else:
+                ctx = ssl.create_default_context()
+            
+            # Make the request
+            with urllib.request.urlopen(req, context=ctx, timeout=10) as response:
+                if response.status == 200:
+                    response_data = json.loads(response.read().decode())
+                    if "token" in response_data:
+                        print(f"{Colors.GREEN}✅ Login successful!{Colors.ENDC}")
+                        return True
+                    else:
+                        print(f"{Colors.RED}❌ No token in response{Colors.ENDC}")
+                        return False
+                else:
+                    print(f"{Colors.RED}❌ Login failed: HTTP {response.status}{Colors.ENDC}")
+                    return False
+                    
+        except urllib.error.HTTPError as e:
+            if e.code == 401:
+                print(f"{Colors.RED}❌ Login failed: Invalid credentials{Colors.ENDC}")
+            elif e.code == 404:
+                print(f"{Colors.RED}❌ Login failed: API endpoint not found (check URL){Colors.ENDC}")
+            else:
+                print(f"{Colors.RED}❌ Login failed: HTTP {e.code}{Colors.ENDC}")
+            return False
+        except urllib.error.URLError as e:
+            print(f"{Colors.RED}❌ Connection failed: {e.reason}{Colors.ENDC}")
+            print(f"{Colors.YELLOW}Check that the URL is correct and the server is accessible{Colors.ENDC}")
+            return False
+        except Exception as e:
+            print(f"{Colors.WARNING}Could not test connection: {e}{Colors.ENDC}")
+            return False
+    
+    def configure_nmc(self) -> bool:
+        """Wrapper for backward compatibility - calls the new retry version"""
+        return self.configure_nmc_with_retry()
     
     def create_sample_env(self):
         """Create a sample .env file for manual configuration"""
@@ -662,81 +762,12 @@ API_TIMEOUT=30.0
             print(f"   Edit this file with your credentials and rename to .env")
         except Exception as e:
             print(f"{Colors.RED}Failed to create sample config: {e}{Colors.ENDC}")
-
+    
     def test_connection(self) -> bool:
-        """Test NMC connection using the login API"""
-        print(f"\n{Colors.BLUE}🔍 Testing NMC connection and credentials...{Colors.ENDC}")
-        
-        # Load the .env file to get credentials
-        env_file = self.install_dir / ".env"
-        if not env_file.exists():
-            print(f"{Colors.WARNING}⚠️  No .env file found, skipping connection test{Colors.ENDC}")
-            return True
-        
-        # Parse the .env file
-        nmc_url = username = password = None
-        verify_ssl = False
-        
-        with open(env_file, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if line.startswith('API_BASE_URL='):
-                    nmc_url = line.split('=', 1)[1].strip().strip('"')
-                elif line.startswith('NMC_USERNAME='):
-                    username = line.split('=', 1)[1].strip().strip('"')
-                elif line.startswith('NMC_PASSWORD='):
-                    password = line.split('=', 1)[1].strip().strip('"')
-                elif line.startswith('VERIFY_SSL='):
-                    verify_ssl = line.split('=', 1)[1].strip().lower() == 'true'
-        
-        if not all([nmc_url, username, password]):
-            print(f"{Colors.WARNING}Missing credentials in .env file{Colors.ENDC}")
-            return True
-        
-        # Test login
-        login_url = f"{nmc_url}/api/v1.2/auth/login/"
-        print(f"Testing login to: {nmc_url}")
-        print(f"Username: {username}")
-        
-        # Create JSON payload
-        import json
-        payload = json.dumps({"username": username, "password": password})
-        
-        try:
-            # Use curl for macOS/Linux
-            curl_cmd = [
-                "curl", "-i", "-X", "POST",
-                login_url,
-                "-H", "Content-Type: application/json",
-                "-d", payload
-            ]
-            
-            if not verify_ssl:
-                curl_cmd.insert(1, "-k")
-            
-            result = subprocess.run(
-                curl_cmd,
-                capture_output=True,
-                text=True,
-                timeout=10
-            )
-            
-            # Check for success indicators
-            if "200 OK" in result.stdout or "token" in result.stdout.lower():
-                print(f"{Colors.GREEN}✅ Login successful!{Colors.ENDC}")
-                return True
-            elif "401" in result.stdout:
-                print(f"{Colors.RED}❌ Login failed: Invalid credentials{Colors.ENDC}")
-                return False
-            else:
-                print(f"{Colors.WARNING}⚠️  Unexpected response{Colors.ENDC}")
-                return False
-                    
-        except Exception as e:
-            print(f"{Colors.WARNING}⚠️  Could not test connection: {e}{Colors.ENDC}")
-            return True  # Don't block installation
-
-
+        """Legacy test connection method - now handled in configure_nmc_with_retry"""
+        # This method is kept for compatibility but the testing is now done
+        # during configuration with retry capability
+        return True
     
     def check_claude_desktop(self) -> Tuple[bool, List[str], List[Path]]:
         """
@@ -938,7 +969,6 @@ API_TIMEOUT=30.0
             print(f"{Colors.RED}❌ Could not create config directory: {e}{Colors.ENDC}")
             return None
 
-
     def safe_update_claude_config(self, config_file: Path, new_server_config: Dict) -> bool:
         """
         Safely update Claude Desktop config without removing existing configurations
@@ -968,10 +998,10 @@ API_TIMEOUT=30.0
                 config["mcpServers"] = {}
                 print(f"{Colors.BLUE}➕ Added mcpServers section{Colors.ENDC}")
             
-            # Check if nasuni-management-mcp-server already exists
-            if "nasuni-management-mcp-server" in config["mcpServers"]:
-                old_config = config["mcpServers"]["nasuni-management-mcp-server"]
-                print(f"{Colors.WARNING}⚠️ Found existing nasuni-management-mcp-server configuration{Colors.ENDC}")
+            # Check if nmc-mcp-server already exists
+            if "nmc-mcp-server" in config["mcpServers"]:
+                old_config = config["mcpServers"]["nmc-mcp-server"]
+                print(f"{Colors.WARNING}⚠️ Found existing nmc-mcp-server configuration{Colors.ENDC}")
                 print(f"   Current command: {old_config.get('command', 'N/A')}")
                 print(f"   Current path: {old_config.get('args', ['N/A'])[0] if old_config.get('args') else 'N/A'}")
                 print(f"   New command: {new_server_config['command']}")
@@ -987,7 +1017,7 @@ API_TIMEOUT=30.0
                     print(f"\n{Colors.YELLOW}What would you like to do?{Colors.ENDC}")
                     print("1. Replace with new configuration (recommended for updates)")
                     print("2. Keep existing configuration")
-                    print("3. Save as 'nasuni-management-mcp-server-new' (keep both)")
+                    print("3. Save as 'nmc-mcp-server-new' (keep both)")
                     
                     try:
                         choice = input("Choice [1]: ").strip() or "1"
@@ -1000,29 +1030,29 @@ API_TIMEOUT=30.0
                         return True
                     elif choice == "3":
                         # Save with different name
-                        alternative_name = "nasuni-management-mcp-server-new"
+                        alternative_name = "nmc-mcp-server-new"
                         counter = 1
                         while f"{alternative_name}" in config["mcpServers"]:
                             counter += 1
-                            alternative_name = f"nasuni-management-mcp-server-{counter}"
+                            alternative_name = f"nmc-mcp-server-{counter}"
                         
                         config["mcpServers"][alternative_name] = new_server_config
                         print(f"{Colors.GREEN}✅ Added as '{alternative_name}' (keeping both){Colors.ENDC}")
                     else:
                         # Replace (default)
-                        print(f"{Colors.BLUE}📝 Replacing existing configuration...{Colors.ENDC}")
-                        config["mcpServers"]["nasuni-management-mcp-server"] = new_server_config
+                        print(f"{Colors.BLUE}🔄 Replacing existing configuration...{Colors.ENDC}")
+                        config["mcpServers"]["nmc-mcp-server"] = new_server_config
                 else:
                     # Non-interactive mode: show warning but proceed with update
-                    print(f"{Colors.YELLOW}📝 Non-interactive mode: updating configuration{Colors.ENDC}")
-                    config["mcpServers"]["nasuni-management-mcp-server"] = new_server_config
+                    print(f"{Colors.YELLOW}🔄 Non-interactive mode: updating configuration{Colors.ENDC}")
+                    config["mcpServers"]["nmc-mcp-server"] = new_server_config
             else:
                 # No existing config, just add it
-                config["mcpServers"]["nasuni-management-mcp-server"] = new_server_config
-                print(f"{Colors.GREEN}✅ Added nasuni-management-mcp-server configuration{Colors.ENDC}")
+                config["mcpServers"]["nmc-mcp-server"] = new_server_config
+                print(f"{Colors.GREEN}✅ Added nmc-mcp-server configuration{Colors.ENDC}")
             
             # Show summary of other configured servers
-            other_servers = [k for k in config["mcpServers"].keys() if k != "nasuni-management-mcp-server"]
+            other_servers = [k for k in config["mcpServers"].keys() if k != "nmc-mcp-server"]
             if other_servers:
                 print(f"{Colors.CYAN}ℹ️ Preserving {len(other_servers)} other MCP server(s):{Colors.ENDC}")
                 for server in other_servers[:5]:  # Show first 5
@@ -1100,10 +1130,6 @@ API_TIMEOUT=30.0
             "command": self.python_cmd,
             "args": [str(main_py)],
             "cwd": str(self.install_dir),
-            # Optional: Add environment variables if needed
-            # "env": {
-            #     "PYTHONPATH": str(self.install_dir)
-            # }
         }
         
         # Update the config file
@@ -1114,7 +1140,7 @@ API_TIMEOUT=30.0
             print(f"   Config file: {config_file}")
             print(f"\n{Colors.HEADER}Next steps:{Colors.ENDC}")
             print(f"1. {Colors.BOLD}Restart Claude Desktop{Colors.ENDC}")
-            print(f"2. Look for 'nasuni-management-mcp-server' in the MCP tools menu")
+            print(f"2. Look for 'nmc-mcp-server' in the MCP tools menu")
             print(f"3. Test by asking: 'List all my filers'")
 
             global claude_configured 
@@ -1271,11 +1297,11 @@ def configure_claude():
         config["mcpServers"] = {{}}
     
     # Show existing servers
-    existing = [k for k in config["mcpServers"].keys() if k != "nasuni-management-mcp-server"]
+    existing = [k for k in config["mcpServers"].keys() if k != "nmc-mcp-server"]
     if existing:
         print(f"ℹ️ Preserving {{len(existing)}} existing MCP server(s)")
     
-    config["mcpServers"]["nasuni-management-mcp-server"] = {{
+    config["mcpServers"]["nmc-mcp-server"] = {{
         "command": python_cmd,
         "args": [main_py],
         "cwd": cwd
@@ -1314,7 +1340,7 @@ if __name__ == "__main__":
         
         config_json = {
             "mcpServers": {
-                "nasuni-management-mcp-server": {
+                "nmc-mcp-server": {
                     "command": self.python_cmd,
                     "args": [str(main_py)],
                     "cwd": str(self.install_dir)
@@ -1327,7 +1353,7 @@ if __name__ == "__main__":
         print(f"{Colors.CYAN}{'='*60}{Colors.ENDC}")
         print("\nAdd this to your existing mcpServers section:")
         print(f"{Colors.YELLOW}")
-        print(json.dumps(config_json["mcpServers"]["nasuni-management-mcp-server"], indent=2))
+        print(json.dumps(config_json["mcpServers"]["nmc-mcp-server"], indent=2))
         print(f"{Colors.ENDC}")
         print(f"\nOr if you have no existing config, use this complete file:")
         print(f"{Colors.YELLOW}")
@@ -1345,14 +1371,13 @@ if __name__ == "__main__":
         else:
             print(f"  • Linux: ~/.config/Claude/claude_desktop_config.json")
 
-
     def create_shortcuts(self):
         """Create convenient shortcuts/commands"""
         print(f"\n{Colors.BLUE}🔗 Creating shortcuts...{Colors.ENDC}")
         
         if self.os_type == "Windows":
             # Create batch file
-            batch_file = self.install_dir / "nasuni-management-mcp.bat"
+            batch_file = self.install_dir / "nmc-mcp.bat"
             batch_content = f'''@echo off
 "{self.python_cmd}" "{self.install_dir}\\main.py" %*
 '''
@@ -1361,7 +1386,7 @@ if __name__ == "__main__":
             
         else:
             # Create shell script
-            shell_file = self.install_dir / "nasuni-management-mcp"
+            shell_file = self.install_dir / "nmc-mcp"
             shell_content = f'''#!/bin/bash
 {self.python_cmd} {self.install_dir}/main.py "$@"
 '''
@@ -1375,123 +1400,7 @@ if __name__ == "__main__":
         print(f"{Colors.BOLD}{Colors.GREEN}✨ Installation Complete!{Colors.ENDC}")
         print(f"{Colors.GREEN}{'='*60}{Colors.ENDC}\n")
         
-        print(f"{Colors.HEADER}📍 Installation Details:{Colors.ENDC}")
+        print(f"{Colors.HEADER}📝 Installation Details:{Colors.ENDC}")
         print(f"  • Location: {self.install_dir}")
         print(f"  • Python: {self.python_cmd}")
-        print(f"  • NMC URL: {self.config.get('url', 'configured')}")
-        
-        # Check Claude Desktop status
-        #claude_installed, _ = self.check_claude_desktop()
-        claude_installed= claude_configured
-
-        if claude_installed:
-            print(f"\n{Colors.HEADER}🚀 Next Steps:{Colors.ENDC}")
-            print(f"  1. {Colors.BOLD}Restart Claude Desktop{Colors.ENDC}")
-            print(f"  2. Look for 'nasuni-management-mcp-server' in Claude's tools menu")
-            print(f"  3. Try asking Claude: 'List all my filers'")
-        else:
-            print(f"\n{Colors.WARNING}⚠️  Claude Desktop Not Installed{Colors.ENDC}")
-            print(f"\n{Colors.HEADER}📥 To Complete Setup:{Colors.ENDC}")
-            print(f"  1. Download Claude Desktop: {Colors.CYAN}https://claude.ai/download{Colors.ENDC}")
-            print(f"  2. Install and run Claude Desktop once")
-            print(f"  3. Run: {Colors.GREEN}{self.python_cmd} {self.install_dir}/configure_claude.py{Colors.ENDC}")
-            print(f"\n{Colors.BLUE}The NMC MCP Server is ready and waiting for Claude Desktop{Colors.ENDC}")
-        
-        print(f"\n{Colors.HEADER}📚 Useful Commands:{Colors.ENDC}")
-        print(f"  • Test connection: {self.python_cmd} {self.install_dir}/main.py")
-        print(f"  • Update config: Edit {self.install_dir}/.env")
-        if not claude_installed:
-            print(f"  • Configure Claude: {self.python_cmd} {self.install_dir}/configure_claude.py")
-        
-        print(f"\n{Colors.CYAN}Need help? Visit: {GITHUB_REPO}{Colors.ENDC}")
-    
-    def run(self):
-        """Run the complete installation process"""
-        try:
-            self.print_header()
-            
-            # Step 1: Check Python
-            if not self.check_python():
-                print(f"\n{Colors.RED}Please install Python 3.10+ and run this installer again{Colors.ENDC}")
-                return False
-            
-            # Step 2: Download from GitHub
-            if not self.download_from_github():
-                return False
-            
-            # Step 3: Setup virtual environment
-            if not self.setup_virtual_environment():
-                return False
-            
-            # Step 4: Configure NMC
-            if not self.configure_nmc():
-                return False
-            
-            # Step 5: Test connection (skip in non-interactive mode)
-            if not self.args.non_interactive:
-                self.test_connection()  # Optional, don't fail if it doesn't work
-            
-            # Step 6: Configure Claude Desktop (skip if requested)
-            # Get confirmation before proceeding
-            proceed_with_claude_setup = input(f"{Colors.YELLOW}Continue with Claude Setup? (y/n): {Colors.ENDC}").lower()
-            
-            if proceed_with_claude_setup  != 'y':
-                print(f"\n{Colors.RED}Skipped Claude Setuo {e}{Colors.ENDC}")
-                return True
-
-            if not self.args.skip_claude and proceed_with_claude_setup == 'y':
-                self.configure_claude_desktop()
-            
-            # Step 7: Create shortcuts
-            self.create_shortcuts()
-            
-            # Success!
-            self.print_success()
-            return True
-            
-        except KeyboardInterrupt:
-            print(f"\n\n{Colors.WARNING}Installation cancelled by user{Colors.ENDC}")
-            return False
-        except Exception as e:
-            print(f"\n{Colors.RED}Installation failed: {e}{Colors.ENDC}")
-            import traceback
-            traceback.print_exc()
-            return False
-
-def main():
-    """Main entry point"""
-    parser = argparse.ArgumentParser(description='NMC MCP Server Universal Installer')
-    parser.add_argument('-d', '--directory', help='Installation directory')
-    parser.add_argument('-n', '--non-interactive', action='store_true', 
-                       help='Run in non-interactive mode (use defaults)')
-    parser.add_argument('--skip-claude', action='store_true',
-                       help='Skip Claude Desktop configuration')
-    parser.add_argument('--use-git', action='store_true',
-                       help='Prefer git clone over ZIP download')
-    parser.add_argument('-q', '--quiet', action='store_true',
-                       help='Minimal output (recommended for Windows console)')
-    parser.add_argument('--nmc-url', help='NMC server URL')
-    parser.add_argument('--username', help='NMC username')
-    parser.add_argument('--password', help='NMC password')
-    
-    args = parser.parse_args()
-    
-    # On Windows, default to quiet mode to prevent crashes
-    if platform.system() == "Windows" and not args.quiet:
-        print("Note: Running in reduced output mode on Windows to prevent console issues.")
-        print("Use --verbose flag if you want detailed output.\n")
-        args.quiet = True
-    
-    # Validate that if credentials are provided, all are provided
-    if any([args.nmc_url, args.username, args.password]):
-        if not all([args.nmc_url, args.username, args.password]):
-            print(f"Error: If providing credentials, you must provide --nmc-url, --username, and --password")
-            sys.exit(1)
-    
-    installer = Installer(args)
-    success = installer.run()
-    input(f"{Colors.YELLOW}Hit enter to exit: {Colors.ENDC}")
-    sys.exit(0 if success else 1)
-
-if __name__ == "__main__":
-    main()
+        print(f"  • NMC URL: {self.config.get('url', 
