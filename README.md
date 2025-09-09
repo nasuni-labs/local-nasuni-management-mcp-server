@@ -1,6 +1,6 @@
-# NMC MCP Server
+# Nasuni Management MCP Server
 
-A comprehensive Model Context Protocol (MCP) server that provides tools for interacting with the Nasuni Management Center (NMC) through Claude AI integration. Using this MCP server, you can get granular details about your Nasuni environment, monitor the health of your appliances, summarize notifications, and generate custom reports.
+A comprehensive Model Context Protocol (MCP) server that provides tools for interacting with your Nasuni environment (Nasuni Management Center (NMC) and Portal) through Claude AI integration. Using this MCP server, you can get granular details about your Nasuni environment, monitor the health of your appliances, summarize notifications, and generate custom reports.
 
 Note: NMC MCP Server is Claude-specific using Anthropic's MCP framework.
 
