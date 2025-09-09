@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Authentication API client implementation."""
+"""Fixed Authentication API client implementation."""
 
 import sys
 import os
 from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
-from dotenv import set_key
+from dotenv import load_dotenv, set_key, find_dotenv
 import httpx
 from api.base_client import BaseAPIClient
 from config.logging_setup import setup_logging, get_logger
@@ -18,8 +18,13 @@ class AuthAPIClient(BaseAPIClient):
     def __init__(self, config):
         super().__init__(config)
         setup_logging()
+        # Load environment variables
+        load_dotenv()
         self.username = os.getenv("NMC_USERNAME")
         self.password = os.getenv("NMC_PASSWORD")
+        # Find the .env file path once during initialization
+        self.env_file_path = find_dotenv() or '.env'
+        logger.debug(f"Using .env file at: {self.env_file_path}")
     
     async def login(self, username: str = None, password: str = None) -> Dict[str, Any]:
         """Login and get a fresh token."""
@@ -29,11 +34,11 @@ class AuthAPIClient(BaseAPIClient):
         
         if not login_username or not login_password:
             return {
-                "error": "Username and password are required. Set FILERS_USERNAME and FILERS_PASSWORD in .env file."
+                "error": "Username and password are required. Set NMC_USERNAME and NMC_PASSWORD in .env file."
             }
         
         print(f"Attempting login for user: {login_username}", file=sys.stderr)
-        
+
         login_data = {
             "username": login_username,
             "password": login_password
@@ -49,8 +54,8 @@ class AuthAPIClient(BaseAPIClient):
         }
         
         # Debug logging
-        logger.debug(f"Making POST request to: {url}", file=sys.stderr)
-        logger.debug(f"SSL Verification: {self.config.verify_ssl}", file=sys.stderr)
+        logger.debug(f"Making POST request to: {url}")
+        logger.debug(f"SSL Verification: {self.config.verify_ssl}")
         logger.debug(f"Headers: {clean_headers}", file=sys.stderr)
         logger.debug(f"Request body: {login_data}", file=sys.stderr)
         
@@ -63,20 +68,11 @@ class AuthAPIClient(BaseAPIClient):
                 
                 response = await client.post(
                     url=url,
-                    headers=clean_headers,  # Use our clean headers
+                    headers=clean_headers,
                     json=login_data
                 )
                 
-                logger.debug(f"Response status: {response.status_code}", file=sys.stderr)
-                logger.debug(f"Response headers: {dict(response.headers)}", file=sys.stderr)
-                
-                # Try to get response body even on error for debugging
-                try:
-                    response_body = response.json()
-                    logger.debug(f"Response body: {response_body}", file=sys.stderr)
-                except:
-                    response_body = response.text
-                    logger.debug(f"Response text: {response_body}", file=sys.stderr)
+                logger.debug(f"Response status: {response.status_code}")
                 
                 # Check for HTTP errors
                 response.raise_for_status()
@@ -85,35 +81,46 @@ class AuthAPIClient(BaseAPIClient):
                 result = response.json()
                 
                 if "token" in result:
-                    print(f"✅ Login successful, token expires: {result.get('expires')}", file=sys.stderr)
-                    # Set the token to environment variables
                     new_token = result["token"]
-                    os.environ["FILERS_API_TOKEN"] = new_token
-                    os.environ["API_TOKEN"] = new_token
-
-                    # Save the token to the .env file for persistence
-                    env_file_path = '.env'  # or wherever your .env file is located
-                    set_key(env_file_path, "API_TOKEN", new_token)
-
+                    expires = result.get("expires", "")
                     
-                    # Also update the config object for immediate use
+                    print(f"✅ Login successful, token expires: {expires}", file=sys.stderr)
+                    
+                    # Update environment variables in memory
+                    os.environ["API_TOKEN"] = new_token
+                    os.environ["API_TOKEN_EXPIRES"] = expires
+                    
+                    # Save to .env file using python-dotenv's set_key
+                    try:
+                        set_key(self.env_file_path, "API_TOKEN", new_token)
+                        set_key(self.env_file_path, "API_TOKEN_EXPIRES", expires)
+                        print(f"✅ Token saved to {self.env_file_path}", file=sys.stderr)
+                    except Exception as e:
+                        print(f"⚠️ Warning: Could not save token to .env file: {e}", file=sys.stderr)
+                    
+                    # Update the config object for immediate use
                     self.config.token = new_token
                     
                     # Update the headers in the base client for subsequent requests
-                    #self.headers = self._build_headers(new_token)                    
+                    self.headers["Authorization"] = f"Token {new_token}"
+                    
+                    
+                    return {
+                        "success": True,
+                        "token": new_token,
+                        "expires": expires
+                    }
                 else:
-                    print(f"❌ Login failed: {result.get('error', 'No token in response')}", file=sys.stderr)
-                
-                return result
+                    error_msg = result.get('error', 'No token in response')
+                    print(f"❌ Login failed: {error_msg}", file=sys.stderr)
+                    return {"error": error_msg}
                 
         except httpx.HTTPStatusError as e:
             error_msg = f"HTTP {e.response.status_code}: {str(e)}"
             print(f"❌ Login HTTP error: {error_msg}", file=sys.stderr)
             
-            # Try to get error details from response
             try:
                 error_details = e.response.json()
-                print(f"Error details: {error_details}", file=sys.stderr)
                 return {"error": error_msg, "details": error_details, "status_code": e.response.status_code}
             except:
                 return {"error": error_msg, "status_code": e.response.status_code}
@@ -135,71 +142,23 @@ class AuthAPIClient(BaseAPIClient):
         if "error" in login_response:
             return login_response
         
-        new_token = login_response.get("token")
-        expires = login_response.get("expires")
-        
-        if not new_token:
-            return {"error": "No token received from login response"}
-        
-        # Update .env file
-        try:
-            self._update_env_file(new_token, expires)
-            print(f"✅ Token updated in .env file, expires: {expires}", file=sys.stderr)
-            
-            # Update the current client's headers
-            #self.headers["Authorization"] = f"Token {new_token}"
-            
+        if login_response.get("success"):
             return {
                 "success": True,
-                "token": new_token,
-                "expires": expires,
+                "token": login_response.get("token"),
+                "expires": login_response.get("expires"),
                 "message": "Token refreshed and .env file updated"
             }
-            
-        except Exception as e:
-            print(f"❌ Failed to update .env file: {e}", file=sys.stderr)
-            return {"error": f"Failed to update .env file: {str(e)}"}
-    
-    def _update_env_file(self, new_token: str, expires: str):
-        """Update the .env file with the new token."""
-        env_file_path = ".env"
-        
-        # Read current .env content
-        if os.path.exists(env_file_path):
-            with open(env_file_path, 'r') as f:
-                lines = f.readlines()
         else:
-            lines = []
-        
-        # Update or add token and expiration
-        updated_lines = []
-        token_found = False
-        expires_found = False
-        
-        for line in lines:
-            if line.startswith("API_TOKEN="):
-                updated_lines.append(f"API_TOKEN={new_token}\n")
-                token_found = True
-            elif line.startswith("API_TOKEN_EXPIRES="):
-                updated_lines.append(f"API_TOKEN_EXPIRES={expires}\n")
-                expires_found = True
-            else:
-                updated_lines.append(line)
-        
-        # Add if not found
-        if not token_found:
-            updated_lines.append(f"API_TOKEN={new_token}\n")
-        if not expires_found:
-            updated_lines.append(f"API_TOKEN_EXPIRES={expires}\n")
-        
-        # Write back
-        with open(env_file_path, 'w') as f:
-            f.writelines(updated_lines)
+            return {"error": "Failed to refresh token"}
     
     def is_token_expired(self) -> bool:
         """Check if the current token is expired or will expire soon."""
-        expires_str = os.getenv("FILERS_TOKEN_EXPIRES")
+        # Check both possible environment variable names
+        expires_str = os.getenv("API_TOKEN_EXPIRES") or os.getenv("FILERS_TOKEN_EXPIRES")
+        
         if not expires_str:
+            print("⚠️ No token expiration info found", file=sys.stderr)
             return True  # No expiration info, assume expired
         
         try:
@@ -211,7 +170,14 @@ class AuthAPIClient(BaseAPIClient):
             now = datetime.now(expires_time.tzinfo)
             time_until_expiry = expires_time - now
             
-            return time_until_expiry < timedelta(minutes=10)
+            is_expired = time_until_expiry < timedelta(minutes=10)
+            
+            if is_expired:
+                print(f"⚠️ Token is expired or expiring soon (expires: {expires_str})", file=sys.stderr)
+            else:
+                print(f"✅ Token is valid until {expires_str}", file=sys.stderr)
+            
+            return is_expired
             
         except Exception as e:
             print(f"⚠️ Error parsing token expiration: {e}", file=sys.stderr)
@@ -232,13 +198,15 @@ class AuthAPIClient(BaseAPIClient):
             # Try a simple API call to test authentication
             response = await self.get("/api/v1.2/filers/")
             return "error" not in response
-        except Exception:
+        except Exception as e:
+            print(f"Connection test failed: {e}", file=sys.stderr)
             return False
     
     def get_token_info(self) -> Dict[str, Any]:
         """Get information about the current token."""
-        token = os.getenv("FILERS_API_TOKEN")
-        expires = os.getenv("FILERS_TOKEN_EXPIRES")
+        # Check both possible environment variable names
+        token = os.getenv("API_TOKEN") or os.getenv("FILERS_API_TOKEN")
+        expires = os.getenv("API_TOKEN_EXPIRES") or os.getenv("FILERS_TOKEN_EXPIRES")
         
         info = {
             "has_token": bool(token),
@@ -261,5 +229,8 @@ class AuthAPIClient(BaseAPIClient):
                     
             except Exception:
                 info["time_until_expiry"] = "Unknown"
+        
+        # Also show where the .env file is located
+        info["env_file_path"] = self.env_file_path
         
         return info

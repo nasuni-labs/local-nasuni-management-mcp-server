@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-NMC MCP Server Universal Installer
+Nasuni Management MCP Server Universal Installer
 Works on Windows, macOS, and Linux
 Downloads latest code from GitHub
 """
@@ -24,8 +24,8 @@ import tempfile
 import time
 
 # GitHub repository URL
-GITHUB_REPO = "https://github.com/nasuni-labs/nasuni-nmc-mcp-desktop-server"
-GITHUB_ARCHIVE = "https://github.com/nasuni-labs/nasuni-nmc-mcp-desktop-server/archive/refs/heads/main.zip"
+GITHUB_REPO = "https://github.com/nasuni-labs/nasuni-management-mcp-desktop-server"
+GITHUB_ARCHIVE = "https://github.com/nasuni-labs/nasuni-management-mcp-desktop-server/archive/refs/heads/main.zip"
 
 # ANSI color codes for terminal output
 class Colors:
@@ -235,7 +235,7 @@ class Installer:
         print(f"\n{Colors.BLUE}📥 Downloading latest version from GitHub...{Colors.ENDC}")
         
         # Choose installation directory
-        default_dir = self.home / "nmc-mcp-server"
+        default_dir = self.home / "nasuni-management-mcp-server"
         install_path = input(f"Installation directory [{default_dir}]: ").strip()
         
         if not install_path:
@@ -263,7 +263,7 @@ class Installer:
             
             with tempfile.TemporaryDirectory() as temp_dir:
                 temp_path = Path(temp_dir)
-                zip_path = temp_path / "nmc-mcp-server.zip"
+                zip_path = temp_path / "nasuni-management-mcp-server.zip"
                 
                 
                 print(f"Downloading from: {GITHUB_ARCHIVE}")
@@ -585,6 +585,12 @@ class Installer:
                 if not username:
                     print(f"\n{Colors.RED}❌ Username is required{Colors.ENDC}")
                     return False
+                
+                # Normalize AD credentials format (single \ to double \\)
+                if '\\' in username:
+                    # First convert any double backslashes to single, then double all
+                    username = username.replace('\\\\', '\\').replace('\\', '\\\\')
+                    print(f"Normalized AD username format: {username}")
                 
                 # Use getpass for password
                 password = getpass.getpass("NMC Password: ")
@@ -962,10 +968,10 @@ API_TIMEOUT=30.0
                 config["mcpServers"] = {}
                 print(f"{Colors.BLUE}➕ Added mcpServers section{Colors.ENDC}")
             
-            # Check if nmc-mcp-server already exists
-            if "nmc-mcp-server" in config["mcpServers"]:
-                old_config = config["mcpServers"]["nmc-mcp-server"]
-                print(f"{Colors.WARNING}⚠️ Found existing nmc-mcp-server configuration{Colors.ENDC}")
+            # Check if nasuni-management-mcp-server already exists
+            if "nasuni-management-mcp-server" in config["mcpServers"]:
+                old_config = config["mcpServers"]["nasuni-management-mcp-server"]
+                print(f"{Colors.WARNING}⚠️ Found existing nasuni-management-mcp-server configuration{Colors.ENDC}")
                 print(f"   Current command: {old_config.get('command', 'N/A')}")
                 print(f"   Current path: {old_config.get('args', ['N/A'])[0] if old_config.get('args') else 'N/A'}")
                 print(f"   New command: {new_server_config['command']}")
@@ -981,7 +987,7 @@ API_TIMEOUT=30.0
                     print(f"\n{Colors.YELLOW}What would you like to do?{Colors.ENDC}")
                     print("1. Replace with new configuration (recommended for updates)")
                     print("2. Keep existing configuration")
-                    print("3. Save as 'nmc-mcp-server-new' (keep both)")
+                    print("3. Save as 'nasuni-management-mcp-server-new' (keep both)")
                     
                     try:
                         choice = input("Choice [1]: ").strip() or "1"
@@ -994,29 +1000,29 @@ API_TIMEOUT=30.0
                         return True
                     elif choice == "3":
                         # Save with different name
-                        alternative_name = "nmc-mcp-server-new"
+                        alternative_name = "nasuni-management-mcp-server-new"
                         counter = 1
                         while f"{alternative_name}" in config["mcpServers"]:
                             counter += 1
-                            alternative_name = f"nmc-mcp-server-{counter}"
+                            alternative_name = f"nasuni-management-mcp-server-{counter}"
                         
                         config["mcpServers"][alternative_name] = new_server_config
                         print(f"{Colors.GREEN}✅ Added as '{alternative_name}' (keeping both){Colors.ENDC}")
                     else:
                         # Replace (default)
                         print(f"{Colors.BLUE}📝 Replacing existing configuration...{Colors.ENDC}")
-                        config["mcpServers"]["nmc-mcp-server"] = new_server_config
+                        config["mcpServers"]["nasuni-management-mcp-server"] = new_server_config
                 else:
                     # Non-interactive mode: show warning but proceed with update
                     print(f"{Colors.YELLOW}📝 Non-interactive mode: updating configuration{Colors.ENDC}")
-                    config["mcpServers"]["nmc-mcp-server"] = new_server_config
+                    config["mcpServers"]["nasuni-management-mcp-server"] = new_server_config
             else:
                 # No existing config, just add it
-                config["mcpServers"]["nmc-mcp-server"] = new_server_config
-                print(f"{Colors.GREEN}✅ Added nmc-mcp-server configuration{Colors.ENDC}")
+                config["mcpServers"]["nasuni-management-mcp-server"] = new_server_config
+                print(f"{Colors.GREEN}✅ Added nasuni-management-mcp-server configuration{Colors.ENDC}")
             
             # Show summary of other configured servers
-            other_servers = [k for k in config["mcpServers"].keys() if k != "nmc-mcp-server"]
+            other_servers = [k for k in config["mcpServers"].keys() if k != "nasuni-management-mcp-server"]
             if other_servers:
                 print(f"{Colors.CYAN}ℹ️ Preserving {len(other_servers)} other MCP server(s):{Colors.ENDC}")
                 for server in other_servers[:5]:  # Show first 5
@@ -1108,7 +1114,7 @@ API_TIMEOUT=30.0
             print(f"   Config file: {config_file}")
             print(f"\n{Colors.HEADER}Next steps:{Colors.ENDC}")
             print(f"1. {Colors.BOLD}Restart Claude Desktop{Colors.ENDC}")
-            print(f"2. Look for 'nmc-mcp-server' in the MCP tools menu")
+            print(f"2. Look for 'nasuni-management-mcp-server' in the MCP tools menu")
             print(f"3. Test by asking: 'List all my filers'")
 
             global claude_configured 
@@ -1265,11 +1271,11 @@ def configure_claude():
         config["mcpServers"] = {{}}
     
     # Show existing servers
-    existing = [k for k in config["mcpServers"].keys() if k != "nmc-mcp-server"]
+    existing = [k for k in config["mcpServers"].keys() if k != "nasuni-management-mcp-server"]
     if existing:
         print(f"ℹ️ Preserving {{len(existing)}} existing MCP server(s)")
     
-    config["mcpServers"]["nmc-mcp-server"] = {{
+    config["mcpServers"]["nasuni-management-mcp-server"] = {{
         "command": python_cmd,
         "args": [main_py],
         "cwd": cwd
@@ -1308,7 +1314,7 @@ if __name__ == "__main__":
         
         config_json = {
             "mcpServers": {
-                "nmc-mcp-server": {
+                "nasuni-management-mcp-server": {
                     "command": self.python_cmd,
                     "args": [str(main_py)],
                     "cwd": str(self.install_dir)
@@ -1321,7 +1327,7 @@ if __name__ == "__main__":
         print(f"{Colors.CYAN}{'='*60}{Colors.ENDC}")
         print("\nAdd this to your existing mcpServers section:")
         print(f"{Colors.YELLOW}")
-        print(json.dumps(config_json["mcpServers"]["nmc-mcp-server"], indent=2))
+        print(json.dumps(config_json["mcpServers"]["nasuni-management-mcp-server"], indent=2))
         print(f"{Colors.ENDC}")
         print(f"\nOr if you have no existing config, use this complete file:")
         print(f"{Colors.YELLOW}")
@@ -1346,7 +1352,7 @@ if __name__ == "__main__":
         
         if self.os_type == "Windows":
             # Create batch file
-            batch_file = self.install_dir / "nmc-mcp.bat"
+            batch_file = self.install_dir / "nasuni-management-mcp.bat"
             batch_content = f'''@echo off
 "{self.python_cmd}" "{self.install_dir}\\main.py" %*
 '''
@@ -1355,7 +1361,7 @@ if __name__ == "__main__":
             
         else:
             # Create shell script
-            shell_file = self.install_dir / "nmc-mcp"
+            shell_file = self.install_dir / "nasuni-management-mcp"
             shell_content = f'''#!/bin/bash
 {self.python_cmd} {self.install_dir}/main.py "$@"
 '''
@@ -1381,7 +1387,7 @@ if __name__ == "__main__":
         if claude_installed:
             print(f"\n{Colors.HEADER}🚀 Next Steps:{Colors.ENDC}")
             print(f"  1. {Colors.BOLD}Restart Claude Desktop{Colors.ENDC}")
-            print(f"  2. Look for 'nmc-mcp-server' in Claude's tools menu")
+            print(f"  2. Look for 'nasuni-management-mcp-server' in Claude's tools menu")
             print(f"  3. Try asking Claude: 'List all my filers'")
         else:
             print(f"\n{Colors.WARNING}⚠️  Claude Desktop Not Installed{Colors.ENDC}")
