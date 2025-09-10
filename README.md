@@ -109,9 +109,9 @@ Download the [installer.py](https://github.com/nasuni-labs/nasuni-management-mcp
 
 **All Platforms:**
 ```bash
-python nmc-installer.py
+python installer.py
 # or
-python3 nmc-installer.py
+python3 installer.py
 ```
 
 ### Step 3: Provide Required Information
