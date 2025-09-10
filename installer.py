@@ -1432,11 +1432,11 @@ if __name__ == "__main__":
                 self.test_connection()  # Optional, don't fail if it doesn't work
             
             # Step 6: Configure Claude Desktop (skip if requested)
-            # Get confirmation before proceeding
+            # Get confirmation before proceeding with setup
             proceed_with_claude_setup = input(f"{Colors.YELLOW}Continue with Claude Setup? (y/n): {Colors.ENDC}").lower()
             
-            if proceed_with_claude_setup  != 'y':
-                print(f"\n{Colors.RED}Skipped Claude Setuo {e}{Colors.ENDC}")
+            if proceed_with_claude_setup  != 'y': 
+                print(f"\n{Colors.YELLOW}Skipped Claude Setup{Colors.ENDC}")
                 return True
 
             if not self.args.skip_claude and proceed_with_claude_setup == 'y':
