@@ -32,12 +32,12 @@ Note: NMC MCP Server is Claude-specific using Anthropic's MCP framework.
 ## Prerequisites
 
 ### Python Requirements
-- **Python**: Version 3.13 or later is required
+- **Python**: Version 3.11+ or later is required
 - **Recommendation**: Install the latest stable Python version for best performance and security
 
 #### Checking Your Python Version
 ```bash
-# Check current Python version
+# Check version (should be 3.11+)
 python --version
 # or
 python3 --version
