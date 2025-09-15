@@ -91,7 +91,7 @@ pyenv global 3.13.1   # Set as default
 
 ### NMC API Requirements  
 - **NMC Credentials**: Accessing the NMC API requires a user who is a member of an NMC group that has the "Enable NMC API Access" permission enabled
-- **API Permissions**: API users must also have the corresponding NMC permission for each action they perform
+- **API Permissions**: Along with 'Enable NMC API Access', the API users must also have the corresponding NMC permission for each action they perform. For a granular permission set, refer to the [Available Tools](https://github.com/nasuni-labs/nasuni-management-local-mcp-server/?tab=readme-ov-file#available-tools) section.
 - **Account Types**: Both native and domain accounts are supported for NMC API authentication (SSO accounts are **not supported** via the NMC API)
 
 ## Installation 
@@ -373,11 +373,17 @@ Test your NMC MCP Server, ask Claude "List all my filers withd details"
 
 ## Available Tools
 
+**Note:** All tools require 'Enable NMC API Access' permissions. 
+
 ### Filer Management
 - `list_filers` - List all filer with hardware details
 - `get_filer_stats` - Get aggregate statistics about all filers
 - `get_filer` - Get detailed information about a specific filer
 - `get_volumes_by_filer` - Get all volumes connected to a filer
+
+**Required Permissions:** 
+- Manage All Filers or a set of Filers
+- Manage Volume Settings (Can't add/delete). 
 
 ### Volume Operations
 - `list_volumes` - List all storage volumes with comprehensive details
@@ -385,17 +391,28 @@ Test your NMC MCP Server, ask Claude "List all my filers withd details"
 - `find_unprotected_volumes` - Identify volumes with unprotected data
 - `analyze_volume_operations` - Comprehensive volume operations analysis
 
+**Required Permissions:** 
+- Manage All Filers or a set of Filers
+- Manage Volume Settings (Can't add/delete). 
+
 ### Share Management
 - `list_shares` - List all SMB/CIFS Shares
 - `get_share_stats` - Get comprehensive Share statistics
 - `get_shares_by_filer` - Get Shares on a specific filer
 - `get_browser_accessible_shares` - Get shares with web browser access
 
+**Required Permissions:** 
+- Manage All Filers or a set of Filers
+- Manage Shares, Exports, FTP and ISCSI
+
 ### Health Monitoring
 - `list_filer_health` - Get health status for all filers
 - `get_filer_health_stats` - Get health statistics across infrastructure
 - `get_unhealthy_filers` - Identify filers requiring attention
 - `get_critical_health_issues` - Get prioritized critical health issues
+
+**Required Permissions:** 
+- Manage All Filers or a set of Filers
 
 ### Authentication & Security
 - `refresh_auth_token` - Refresh authentication token
@@ -407,10 +424,16 @@ Test your NMC MCP Server, ask Claude "List all my filers withd details"
 - `get_credential_stats` - Get cloud credential statistics
 - `analyze_credential_usage` - Analyze credential usage patterns
 
+**Required Permissions:** 
+- Manage all aspects of the Filer (super user)
+
 ### 📊 Notifications & Monitoring
 - `list_notifications` - List system notifications with filtering
 - `get_notification_summary` - Get notification statistics and summaries
 - `analyze_notification_patterns` - Identify recurring issues and trends
+
+**Required Permissions:** 
+- Manage Notifications (Both NMC and Filer Permissions)
 
 ## Development
 
