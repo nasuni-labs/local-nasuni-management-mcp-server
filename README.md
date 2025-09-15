@@ -48,26 +48,14 @@ Always install the latest stable Python version from the [official Python websit
 
 **macOS (using Homebrew):**
 ```bash
+# If Python is installed but running a version older than 3.11
+brew upgrade python
+
 # Install latest Python (recommended)
 brew install python
 
 # Or install latest Python 3
 brew install python@3
-```
-
-**Linux (Ubuntu/Debian):**
-```bash
-# Add deadsnakes PPA for latest Python versions
-sudo apt update
-sudo apt install software-properties-common
-sudo add-apt-repository ppa:deadsnakes/ppa
-sudo apt update
-
-# Install latest Python (check python.org for current version number)
-sudo apt install python3.13 python3.13-pip python3.13-venv
-
-# Or use your distribution's latest available version
-sudo apt install python3 python3-pip python3-venv
 ```
 
 **Windows:**
@@ -81,6 +69,28 @@ sudo apt install python3 python3-pip python3-venv
 pyenv install --list | grep "3\." | tail -5  # See latest versions
 pyenv install 3.13.1  # Replace with latest version number
 pyenv global 3.13.1   # Set as default
+pyenv versions        # Verify installation
+```
+
+**Linux (Ubuntu/Debian):**
+```bash
+# Add deadsnakes PPA for latest Python versions
+sudo apt update
+sudo apt install software-properties-common
+sudo add-apt-repository ppa:deadsnakes/ppa
+sudo apt update
+
+# Install latest Python (check python.org for current version number)
+sudo apt install python3.13 python3.13-pip python3.13-venv python3.13-dev
+
+# Or use your distribution's latest available version
+sudo apt install python3 python3-pip python3-venv
+
+# For other Linux distributions:
+# CentOS/RHEL/Fedora:
+sudo dnf install python3 python3-pip python3-venv
+# Arch Linux:
+sudo pacman -S python python-pip
 ```
 
 ### Claude AI Integration Requirements
