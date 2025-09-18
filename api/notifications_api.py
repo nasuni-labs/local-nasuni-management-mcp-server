@@ -1,25 +1,23 @@
 #!/usr/bin/env python3
-"""Notifications API client implementation with backend filtering."""
+"""Enhanced Notifications API client with smart time-based fetching."""
 
 import sys
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime, timedelta
 from api.base_client import BaseAPIClient
 from models.notification import Notification
 
 
 class NotificationsAPIClient(BaseAPIClient):
-    """Client for interacting with the Notifications API."""
+    """Client for interacting with the Notifications API with optimized fetching."""
     
     async def list_notifications(self, limit: int = 50, offset: int = 0) -> Dict[str, Any]:
         """
         Fetch notifications from the API.
         Note: The API only supports limit and offset parameters.
-        All other filtering must be done on the client side.
         """
         print(f"Fetching notifications (limit={limit}, offset={offset})...", file=sys.stderr)
         
-        # API only supports limit and offset
         response = await self.get(f"/api/v1.2/notifications/?limit={limit}&offset={offset}")
         
         if "error" not in response:
@@ -42,17 +40,36 @@ class NotificationsAPIClient(BaseAPIClient):
         except Exception:
             return False
     
-    async def get_all_notifications_raw(self, max_items: int = 1000) -> List[Dict[str, Any]]:
+    async def smart_fetch_by_time(
+        self, 
+        hours: int, 
+        batch_size: int = 50,
+        max_total: int = 5000,
+        early_stop: bool = True
+    ) -> Tuple[List[Dict[str, Any]], bool]:
         """
-        Get raw notification data up to max_items (paginated).
-        Returns raw dictionaries for maximum flexibility in filtering.
+        Smart fetching strategy for time-based queries.
+        
+        Args:
+            hours: Number of hours to look back
+            batch_size: Number of notifications per API call
+            max_total: Maximum total notifications to fetch (safety limit)
+            early_stop: Stop when we've gone past the time window
+            
+        Returns:
+            Tuple of (notifications_list, reached_time_limit)
         """
+        cutoff_time = datetime.now() - timedelta(hours=hours)
         all_notifications = []
         offset = 0
-        limit = 50  # API limit per request
+        reached_time_limit = False
+        consecutive_old = 0  # Track consecutive old notifications for early stopping
         
-        while len(all_notifications) < max_items:
-            response = await self.list_notifications(limit=limit, offset=offset)
+        print(f"Smart fetching notifications from last {hours} hours (cutoff: {cutoff_time})", file=sys.stderr)
+        
+        while len(all_notifications) < max_total:
+            # Fetch batch
+            response = await self.list_notifications(limit=batch_size, offset=offset)
             
             if "error" in response:
                 print(f"Error fetching notifications: {response['error']}", file=sys.stderr)
@@ -60,69 +77,153 @@ class NotificationsAPIClient(BaseAPIClient):
             
             items = response.get("items", [])
             if not items:
-                break  # No more items
+                print("No more notifications available", file=sys.stderr)
+                break
             
-            all_notifications.extend(items)
+            # Process batch and check timestamps
+            batch_in_window = []
+            batch_out_window = []
             
-            # Check if we have more pages
+            for item in items:
+                try:
+                    # Parse the timestamp
+                    notif = Notification(item)
+                    if notif.datetime_obj:
+                        n_time = notif.datetime_obj.replace(tzinfo=None) if notif.datetime_obj.tzinfo else notif.datetime_obj
+                        
+                        if n_time >= cutoff_time:
+                            batch_in_window.append(item)
+                            consecutive_old = 0  # Reset counter
+                        else:
+                            batch_out_window.append(item)
+                            consecutive_old += 1
+                    else:
+                        # If we can't parse timestamp, include it to be safe
+                        batch_in_window.append(item)
+                except Exception as e:
+                    print(f"Error processing notification: {e}", file=sys.stderr)
+                    batch_in_window.append(item)  # Include problematic ones
+            
+            # Add notifications within time window
+            all_notifications.extend(batch_in_window)
+            
+            print(f"Batch {offset//batch_size + 1}: {len(batch_in_window)}/{len(items)} within time window", file=sys.stderr)
+            
+            # Early stopping logic
+            if early_stop and consecutive_old >= batch_size:
+                print(f"Reached notifications older than {hours} hours, stopping", file=sys.stderr)
+                reached_time_limit = True
+                break
+            
+            # Check if we should continue
             if not response.get("next"):
+                print("No more pages available", file=sys.stderr)
                 break
             
-            offset += limit
-            
-            # Stop if we've reached our max
-            if len(all_notifications) >= max_items:
-                all_notifications = all_notifications[:max_items]
+            # If entire batch was outside time window and early_stop is enabled
+            if early_stop and len(batch_out_window) == len(items):
+                print(f"Entire batch outside time window, stopping", file=sys.stderr)
+                reached_time_limit = True
                 break
+            
+            offset += batch_size
         
-        print(f"Retrieved {len(all_notifications)} total notifications", file=sys.stderr)
-        return all_notifications
+        print(f"Smart fetch complete: {len(all_notifications)} notifications from last {hours} hours", file=sys.stderr)
+        return all_notifications, reached_time_limit
     
-    async def get_all_notifications(self, max_items: int = 500) -> List[Notification]:
+    async def estimate_notification_rate(self, sample_size: int = 100) -> float:
         """
-        Get all notifications up to max_items as Notification objects.
-        This method is for backward compatibility.
+        Estimate the rate of notifications per hour based on a sample.
+        This helps optimize fetching strategies.
         """
-        raw_notifications = await self.get_all_notifications_raw(max_items=max_items)
+        response = await self.list_notifications(limit=sample_size, offset=0)
         
+        if "error" in response or not response.get("items"):
+            return 0.0
+        
+        items = response["items"]
+        
+        # Get time span of sample
+        timestamps = []
+        for item in items:
+            try:
+                notif = Notification(item)
+                if notif.datetime_obj:
+                    timestamps.append(notif.datetime_obj)
+            except:
+                continue
+        
+        if len(timestamps) < 2:
+            return 0.0
+        
+        timestamps.sort()
+        time_span = (timestamps[-1] - timestamps[0]).total_seconds() / 3600  # in hours
+        
+        if time_span > 0:
+            rate = len(timestamps) / time_span
+            print(f"Estimated notification rate: {rate:.1f} per hour", file=sys.stderr)
+            return rate
+        
+        return 0.0
+    
+    async def get_recent_notifications(
+        self, 
+        hours: int = 24, 
+        limit: Optional[int] = None
+    ) -> List[Notification]:
+        """
+        Get notifications from the last N hours with smart fetching.
+        
+        Args:
+            hours: Number of hours to look back
+            limit: Optional maximum number of notifications to return
+        """
+        # Estimate how many notifications we might need to fetch
+        rate = await self.estimate_notification_rate()
+        
+        if rate > 0:
+            # Estimate expected notifications with 50% buffer
+            expected = int(rate * hours * 1.5)
+            print(f"Expecting approximately {expected} notifications in {hours} hours", file=sys.stderr)
+            
+            # Use smart batching based on expected volume
+            if expected < 200:
+                batch_size = 50
+            elif expected < 1000:
+                batch_size = 100
+            else:
+                batch_size = 200
+                
+            # Warn if volume is very high
+            if expected > 2000:
+                print(f"⚠️ High notification volume detected (~{expected} in {hours}h)", file=sys.stderr)
+                print("Consider using smaller time windows or filtering by priority/origin", file=sys.stderr)
+        else:
+            batch_size = 100
+        
+        # Use smart fetch
+        raw_notifications, reached_limit = await self.smart_fetch_by_time(
+            hours=hours,
+            batch_size=batch_size,
+            max_total=limit or 5000
+        )
+        
+        # Convert to Notification objects
         notifications = []
         for item in raw_notifications:
             try:
-                notification = Notification(item)
-                notifications.append(notification)
+                notifications.append(Notification(item))
             except Exception as e:
                 print(f"Error parsing notification: {e}", file=sys.stderr)
-                continue
+        
+        # Sort by timestamp (newest first)
+        notifications.sort(key=lambda n: n.datetime_obj or datetime.min, reverse=True)
+        
+        # Apply limit if specified
+        if limit and len(notifications) > limit:
+            notifications = notifications[:limit]
         
         return notifications
-    
-    async def get_notifications_by_origin(self, origin: str, limit: int = 100) -> List[Notification]:
-        """Get notifications from a specific origin (filer)."""
-        return await self.get_notifications_filtered(max_items=limit, origin=origin)
-    
-    async def get_notifications_by_priority(self, priority: str, limit: int = 100) -> List[Notification]:
-        """Get notifications by priority level."""
-        return await self.get_notifications_filtered(max_items=limit, priority=priority)
-    
-    async def get_notifications_by_name(self, name: str, limit: int = 100) -> List[Notification]:
-        """Get notifications by name/type."""
-        return await self.get_notifications_filtered(max_items=limit, name=name)
-    
-    async def get_notifications_by_volume(self, volume_name: str, limit: int = 100) -> List[Notification]:
-        """Get notifications related to a specific volume."""
-        return await self.get_notifications_filtered(max_items=limit, volume=volume_name)
-    
-    async def get_unacknowledged_notifications(self, limit: int = 100) -> List[Notification]:
-        """Get unacknowledged notifications."""
-        return await self.get_notifications_filtered(max_items=limit, acknowledged=False)
-    
-    async def get_urgent_notifications(self, limit: int = 100) -> List[Notification]:
-        """Get urgent notifications."""
-        return await self.get_notifications_filtered(max_items=limit, urgent=True)
-    
-    async def get_recent_notifications(self, hours: int = 24, limit: int = 200) -> List[Notification]:
-        """Get notifications from the last N hours."""
-        return await self.get_notifications_filtered(max_items=limit, hours=hours)
     
     async def get_notifications_filtered(
         self,
@@ -137,12 +238,19 @@ class NotificationsAPIClient(BaseAPIClient):
         urgent: Optional[bool] = None
     ) -> List[Notification]:
         """
-        Get notifications with client-side filtering.
-        Since the API only supports limit/offset, we fetch notifications
-        and filter them locally.
+        Get notifications with filtering.
+        Uses smart fetching for time-based queries.
         """
-        # Get raw notifications
-        raw_notifications = await self.get_all_notifications_raw(max_items=max_items)
+        # If hours is specified, use smart time-based fetching
+        if hours:
+            # Use smart fetch for time-based queries
+            raw_notifications, _ = await self.smart_fetch_by_time(
+                hours=hours,
+                max_total=max_items * 2  # Fetch more to account for filtering
+            )
+        else:
+            # Traditional fetching for non-time queries
+            raw_notifications = await self.get_all_notifications_raw(max_items=max_items)
         
         # Convert to models
         notifications = []
@@ -184,19 +292,6 @@ class NotificationsAPIClient(BaseAPIClient):
             filtered = [n for n in filtered if n.volume_name and volume.lower() in n.volume_name.lower()]
             print(f"After volume filter: {len(filtered)} notifications", file=sys.stderr)
         
-        # Filter by time
-        if hours:
-            cutoff_time = datetime.now() - timedelta(hours=hours)
-            time_filtered = []
-            for n in filtered:
-                if n.datetime_obj:
-                    # Handle timezone-aware datetime
-                    n_time = n.datetime_obj.replace(tzinfo=None) if n.datetime_obj.tzinfo else n.datetime_obj
-                    if n_time > cutoff_time:
-                        time_filtered.append(n)
-            filtered = time_filtered
-            print(f"After time filter ({hours} hours): {len(filtered)} notifications", file=sys.stderr)
-        
         # Filter by acknowledged status
         if acknowledged is not None:
             filtered = [n for n in filtered if n.acknowledged == acknowledged]
@@ -207,60 +302,58 @@ class NotificationsAPIClient(BaseAPIClient):
             filtered = [n for n in filtered if n.urgent == urgent]
             print(f"After urgent filter: {len(filtered)} notifications", file=sys.stderr)
         
+        # Apply max_items limit
+        if len(filtered) > max_items:
+            filtered = filtered[:max_items]
+            print(f"Limited to {max_items} notifications", file=sys.stderr)
+        
         print(f"Final filtered result: {len(filtered)} notifications", file=sys.stderr)
         return filtered
     
-    async def search_notifications(
-        self,
-        search_terms: List[str],
-        max_items: int = 1000,
-        hours: Optional[int] = None
-    ) -> List[Notification]:
+    async def get_all_notifications_raw(self, max_items: int = 1000) -> List[Dict[str, Any]]:
         """
-        Search notifications for any of the given terms in name or message.
-        Useful for finding snapshot-related notifications.
+        Get raw notification data up to max_items (paginated).
+        Kept for backward compatibility.
         """
-        raw_notifications = await self.get_all_notifications_raw(max_items=max_items)
+        all_notifications = []
+        offset = 0
+        limit = 50  # API limit per request
         
-        # Convert to models
-        notifications = []
-        for item in raw_notifications:
-            try:
-                notification = Notification(item)
-                notifications.append(notification)
-            except Exception as e:
-                continue
+        while len(all_notifications) < max_items:
+            response = await self.list_notifications(limit=limit, offset=offset)
+            
+            if "error" in response:
+                print(f"Error fetching notifications: {response['error']}", file=sys.stderr)
+                break
+            
+            items = response.get("items", [])
+            if not items:
+                break  # No more items
+            
+            all_notifications.extend(items)
+            
+            # Check if we have more pages
+            if not response.get("next"):
+                break
+            
+            offset += limit
+            
+            # Stop if we've reached our max
+            if len(all_notifications) >= max_items:
+                all_notifications = all_notifications[:max_items]
+                break
         
-        # Apply time filter if specified
-        if hours:
-            cutoff_time = datetime.now() - timedelta(hours=hours)
-            time_filtered = []
-            for n in notifications:
-                if n.datetime_obj:
-                    n_time = n.datetime_obj.replace(tzinfo=None) if n.datetime_obj.tzinfo else n.datetime_obj
-                    if n_time > cutoff_time:
-                        time_filtered.append(n)
-            notifications = time_filtered
-        
-        # Search for terms
-        results = []
-        for notif in notifications:
-            for term in search_terms:
-                term_lower = term.lower()
-                if (term_lower in notif.name.lower() or 
-                    term_lower in notif.message.lower()):
-                    results.append(notif)
-                    break  # Don't add the same notification multiple times
-        
-        print(f"Found {len(results)} notifications matching search terms", file=sys.stderr)
-        return results
+        print(f"Retrieved {len(all_notifications)} total notifications", file=sys.stderr)
+        return all_notifications
     
     async def get_notification_statistics(self, max_items: int = 1000) -> Dict[str, Any]:
         """
         Get statistics about notifications.
-        Note: This method takes max_items as a parameter, not limit.
+        Uses smart fetching for better performance.
         """
-        notifications = await self.get_notifications_filtered(max_items=max_items)
+        # For statistics, we might want recent notifications
+        # Default to last 7 days for meaningful stats
+        notifications = await self.get_recent_notifications(hours=168, limit=max_items)
         
         if not notifications:
             return {
@@ -283,7 +376,8 @@ class NotificationsAPIClient(BaseAPIClient):
             "snapshot_related": 0,
             "top_messages": {},
             "recent_1h": 0,
-            "recent_24h": 0
+            "recent_24h": 0,
+            "hourly_distribution": {}  # New: hour-by-hour distribution
         }
         
         # Snapshot-related terms
@@ -338,13 +432,16 @@ class NotificationsAPIClient(BaseAPIClient):
             msg_key = notif.name
             stats["top_messages"][msg_key] = stats["top_messages"].get(msg_key, 0) + 1
             
-            # Recent notifications
+            # Time-based statistics
             if notif.datetime_obj:
                 dt = notif.datetime_obj.replace(tzinfo=None) if notif.datetime_obj.tzinfo else notif.datetime_obj
                 if dt > one_hour_ago:
                     stats["recent_1h"] += 1
                 if dt > one_day_ago:
                     stats["recent_24h"] += 1
+                    # Track hourly distribution for last 24h
+                    hour = dt.hour
+                    stats["hourly_distribution"][hour] = stats["hourly_distribution"].get(hour, 0) + 1
         
         # Sort top messages
         stats["top_messages"] = dict(sorted(
@@ -361,3 +458,43 @@ class NotificationsAPIClient(BaseAPIClient):
         )[:20])
         
         return stats
+    
+    # Backward compatibility methods
+    async def get_all_notifications(self, max_items: int = 500) -> List[Notification]:
+        """Get all notifications up to max_items as Notification objects."""
+        raw_notifications = await self.get_all_notifications_raw(max_items=max_items)
+        
+        notifications = []
+        for item in raw_notifications:
+            try:
+                notification = Notification(item)
+                notifications.append(notification)
+            except Exception as e:
+                print(f"Error parsing notification: {e}", file=sys.stderr)
+                continue
+        
+        return notifications
+    
+    async def get_notifications_by_origin(self, origin: str, limit: int = 100) -> List[Notification]:
+        """Get notifications from a specific origin (filer)."""
+        return await self.get_notifications_filtered(max_items=limit, origin=origin)
+    
+    async def get_notifications_by_priority(self, priority: str, limit: int = 100) -> List[Notification]:
+        """Get notifications by priority level."""
+        return await self.get_notifications_filtered(max_items=limit, priority=priority)
+    
+    async def get_notifications_by_name(self, name: str, limit: int = 100) -> List[Notification]:
+        """Get notifications by name/type."""
+        return await self.get_notifications_filtered(max_items=limit, name=name)
+    
+    async def get_notifications_by_volume(self, volume_name: str, limit: int = 100) -> List[Notification]:
+        """Get notifications related to a specific volume."""
+        return await self.get_notifications_filtered(max_items=limit, volume=volume_name)
+    
+    async def get_unacknowledged_notifications(self, limit: int = 100) -> List[Notification]:
+        """Get unacknowledged notifications."""
+        return await self.get_notifications_filtered(max_items=limit, acknowledged=False)
+    
+    async def get_urgent_notifications(self, limit: int = 100) -> List[Notification]:
+        """Get urgent notifications."""
+        return await self.get_notifications_filtered(max_items=limit, urgent=True)

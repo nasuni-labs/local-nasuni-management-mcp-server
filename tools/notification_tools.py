@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
-"""Notification-related MCP tools."""
+"""Enhanced notification-related MCP tools with smart time-based fetching."""
 
+import sys
 import json
 from typing import Dict, Any, List, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 from mcp.types import TextContent
 from tools.base_tool import BaseTool
 from api.notifications_api import NotificationsAPIClient
 
 
 class ListNotificationsTool(BaseTool):
-    """Tool to list notifications with filtering."""
+    """Tool to list notifications with intelligent filtering."""
     
     def __init__(self, api_client: NotificationsAPIClient):
         super().__init__(
             name="list_notifications",
-            description="List system notifications with optional filters. Can filter by origin (filer), priority, name/type, date range, or volume. Shows alerts, warnings, info messages, and system events."
+            description="List system notifications with optional filters. Can filter by origin (filer), priority, name/type, date range, or volume. When filtering by time (hours parameter), automatically fetches all notifications within that time window."
         )
         self.api_client = api_client
     
@@ -42,11 +43,11 @@ class ListNotificationsTool(BaseTool):
                 },
                 "hours": {
                     "type": "integer",
-                    "description": "Show notifications from last N hours (default: 24)"
+                    "description": "Show notifications from last N hours (e.g., 24 for last day)"
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "Maximum number of notifications to retrieve (default: 100)"
+                    "description": "Maximum notifications to return (only applies after filtering, not for time-based fetching)"
                 },
                 "unacknowledged_only": {
                     "type": "boolean",
@@ -61,26 +62,83 @@ class ListNotificationsTool(BaseTool):
         }
     
     async def execute(self, arguments: Dict[str, Any]) -> List[TextContent]:
-        """Execute the list notifications tool."""
+        """Execute the list notifications tool with smart time handling."""
         try:
-            limit = arguments.get("limit", 100)
+            hours = arguments.get("hours")
+            limit = arguments.get("limit")
             
-            # Use the unified filtered method that handles client-side filtering
-            notifications = await self.api_client.get_notifications_filtered(
-                max_items=limit,
-                origin=arguments.get("origin"),
-                priority=arguments.get("priority"),
-                name=arguments.get("name"),
-                volume=arguments.get("volume"),
-                hours=arguments.get("hours"),
-                acknowledged=False if arguments.get("unacknowledged_only") else None,
-                urgent=True if arguments.get("urgent_only") else None
-            )
+            # Smart handling based on query type
+            if hours:
+                # For time-based queries, we need to fetch ALL notifications in that window
+                # The limit only applies AFTER filtering
+                print(f"Time-based query for {hours} hours - using smart fetching", file=sys.stderr)
+                
+                # Check if API client has the new smart methods
+                if hasattr(self.api_client, 'get_recent_notifications'):
+                    # Use the enhanced API with smart fetching
+                    notifications = await self.api_client.get_recent_notifications(
+                        hours=hours,
+                        limit=None  # Don't limit initial fetch for time window
+                    )
+                    
+                    # Now apply additional filters
+                    if arguments.get("origin"):
+                        notifications = [n for n in notifications if arguments["origin"].lower() in n.origin.lower()]
+                    if arguments.get("priority"):
+                        notifications = [n for n in notifications if n.priority.lower() == arguments["priority"].lower()]
+                    if arguments.get("name"):
+                        notifications = [n for n in notifications if arguments["name"].upper() in n.name.upper()]
+                    if arguments.get("volume"):
+                        notifications = [n for n in notifications if n.volume_name and arguments["volume"].lower() in n.volume_name.lower()]
+                    if arguments.get("unacknowledged_only"):
+                        notifications = [n for n in notifications if not n.acknowledged]
+                    if arguments.get("urgent_only"):
+                        notifications = [n for n in notifications if n.urgent]
+                    
+                    # Apply limit AFTER all filtering
+                    if limit and len(notifications) > limit:
+                        print(f"Limiting results from {len(notifications)} to {limit}", file=sys.stderr)
+                        notifications = notifications[:limit]
+                else:
+                    # Fallback to old method but with higher max_items for time queries
+                    # Calculate a reasonable max based on expected volume
+                    expected_max = hours * 50  # Assume ~50 notifications per hour as upper bound
+                    max_items = min(expected_max, 5000)  # Cap at 5000 for safety
+                    
+                    print(f"Using fallback method with max_items={max_items}", file=sys.stderr)
+                    
+                    notifications = await self.api_client.get_notifications_filtered(
+                        max_items=max_items,
+                        origin=arguments.get("origin"),
+                        priority=arguments.get("priority"),
+                        name=arguments.get("name"),
+                        volume=arguments.get("volume"),
+                        hours=hours,
+                        acknowledged=False if arguments.get("unacknowledged_only") else None,
+                        urgent=True if arguments.get("urgent_only") else None
+                    )
+                    
+                    # Apply user limit if specified
+                    if limit and len(notifications) > limit:
+                        notifications = notifications[:limit]
+            else:
+                # For non-time queries, use the limit or a reasonable default
+                max_items = limit or 200  # Increased default from 100 to 200
+                
+                notifications = await self.api_client.get_notifications_filtered(
+                    max_items=max_items,
+                    origin=arguments.get("origin"),
+                    priority=arguments.get("priority"),
+                    name=arguments.get("name"),
+                    volume=arguments.get("volume"),
+                    acknowledged=False if arguments.get("unacknowledged_only") else None,
+                    urgent=True if arguments.get("urgent_only") else None
+                )
             
             if not notifications:
                 return [TextContent(type="text", text="No notifications found matching the criteria.")]
             
-            # Format output
+            # Format output with summary statistics
             output = self._format_notifications_output(notifications, arguments)
             return [TextContent(type="text", text=output)]
             
@@ -88,7 +146,7 @@ class ListNotificationsTool(BaseTool):
             return self.format_error(f"Unexpected error: {str(e)}")
     
     def _format_notifications_output(self, notifications: List, arguments: Dict) -> str:
-        """Format notifications output."""
+        """Format notifications output with better summary."""
         total = len(notifications)
         
         # Build filter description
@@ -110,14 +168,25 @@ class ListNotificationsTool(BaseTool):
         
         filter_desc = ", ".join(filters) if filters else "no filters"
         
+        # Count by priority for summary
+        priority_counts = {}
+        for notif in notifications:
+            p = notif.priority
+            priority_counts[p] = priority_counts.get(p, 0) + 1
+        
         output = f"""NOTIFICATIONS
 
 === SUMMARY ===
 Total Notifications: {total}
 Filters: {filter_desc}
 
-=== NOTIFICATIONS ===
+Priority Distribution:
 """
+        for priority in ['critical', 'error', 'warning', 'info']:
+            if priority in priority_counts:
+                output += f"  {priority.capitalize()}: {priority_counts[priority]}\n"
+        
+        output += "\n=== NOTIFICATIONS ===\n"
         
         # Group by origin for better readability
         by_origin = {}
@@ -127,11 +196,13 @@ Filters: {filter_desc}
                 by_origin[origin] = []
             by_origin[origin].append(notif)
         
+        # Show notifications grouped by origin
         for origin, origin_notifs in sorted(by_origin.items()):
             output += f"\n📍 {origin} ({len(origin_notifs)} notifications)\n"
             output += "-" * 50 + "\n"
             
-            for notif in origin_notifs[:10]:  # Show first 10 per origin
+            # Show up to 10 per origin
+            for i, notif in enumerate(origin_notifs[:10], 1):
                 # Priority icon
                 if notif.is_error:
                     icon = "🔴"
@@ -153,6 +224,13 @@ Filters: {filter_desc}
             if len(origin_notifs) > 10:
                 output += f"   ... and {len(origin_notifs) - 10} more\n"
         
+        # Add note about fetching if time-based
+        if arguments.get("hours"):
+            output += f"\n📊 Note: Fetched all notifications from the last {arguments['hours']} hours"
+            if arguments.get("limit"):
+                output += f" (limited to {arguments['limit']} after filtering)"
+            output += "\n"
+        
         return output
 
 
@@ -162,7 +240,7 @@ class GetNotificationSummaryTool(BaseTool):
     def __init__(self, api_client: NotificationsAPIClient):
         super().__init__(
             name="get_notification_summary",
-            description="Get a summary and statistics of notifications including distribution by priority, origin, type, and recent activity patterns."
+            description="Get a summary and statistics of notifications. By default analyzes last 7 days of notifications for meaningful patterns."
         )
         self.api_client = api_client
     
@@ -171,9 +249,13 @@ class GetNotificationSummaryTool(BaseTool):
         return {
             "type": "object",
             "properties": {
+                "hours": {
+                    "type": "integer",
+                    "description": "Number of hours to analyze (default: 168 = 7 days)"
+                },
                 "limit": {
                     "type": "integer",
-                    "description": "Number of notifications to analyze (default: 500)"
+                    "description": "Maximum notifications to analyze (default: 2000)"
                 }
             },
             "additionalProperties": False
@@ -182,54 +264,150 @@ class GetNotificationSummaryTool(BaseTool):
     async def execute(self, arguments: Dict[str, Any]) -> List[TextContent]:
         """Execute the notification summary tool."""
         try:
-            max_items = arguments.get("limit", 500)  # User provides 'limit', but method expects 'max_items'
-            stats = await self.api_client.get_notification_statistics(max_items=max_items)
+            # Default to last 7 days for meaningful statistics
+            hours = arguments.get("hours", 168)
+            limit = arguments.get("limit", 2000)
+            
+            # Check if API has enhanced methods
+            if hasattr(self.api_client, 'get_recent_notifications'):
+                # Use smart fetching for recent notifications
+                notifications = await self.api_client.get_recent_notifications(
+                    hours=hours,
+                    limit=limit
+                )
+                
+                # Generate statistics from fetched notifications
+                stats = self._calculate_statistics(notifications)
+            else:
+                # Fallback to old method
+                stats = await self.api_client.get_notification_statistics(max_items=limit)
             
             if "error" in stats:
                 return self.format_error(stats["error"])
             
-            output = self._format_notification_summary(stats)
+            output = self._format_notification_summary(stats, hours)
             return [TextContent(type="text", text=output)]
             
         except Exception as e:
             return self.format_error(f"Unexpected error: {str(e)}")
     
-    def _format_notification_summary(self, stats: Dict[str, Any]) -> str:
-        """Format notification summary."""
+    def _calculate_statistics(self, notifications: List) -> Dict[str, Any]:
+        """Calculate statistics from notification list."""
+        from datetime import datetime, timedelta
+        
+        if not notifications:
+            return {"total": 0, "error": "No notifications found"}
+        
+        stats = {
+            "total": len(notifications),
+            "by_priority": {},
+            "by_origin": {},
+            "by_type": {},
+            "by_name": {},
+            "acknowledged": 0,
+            "unacknowledged": 0,
+            "urgent": 0,
+            "volume_related": 0,
+            "top_messages": {},
+            "recent_1h": 0,
+            "recent_24h": 0,
+            "hourly_distribution": {}
+        }
+        
+        now = datetime.now()
+        one_hour_ago = now - timedelta(hours=1)
+        one_day_ago = now - timedelta(hours=24)
+        
+        for notif in notifications:
+            # Priority distribution
+            priority = notif.priority
+            stats["by_priority"][priority] = stats["by_priority"].get(priority, 0) + 1
+            
+            # Origin distribution
+            origin = notif.origin or "Unknown"
+            stats["by_origin"][origin] = stats["by_origin"].get(origin, 0) + 1
+            
+            # Type distribution
+            notif_type = notif.notification_type
+            stats["by_type"][notif_type] = stats["by_type"].get(notif_type, 0) + 1
+            
+            # Name distribution
+            stats["by_name"][notif.name] = stats["by_name"].get(notif.name, 0) + 1
+            
+            # Status counts
+            if notif.acknowledged:
+                stats["acknowledged"] += 1
+            else:
+                stats["unacknowledged"] += 1
+            
+            if notif.urgent:
+                stats["urgent"] += 1
+            
+            if notif.volume_name:
+                stats["volume_related"] += 1
+            
+            # Message frequency
+            stats["top_messages"][notif.name] = stats["top_messages"].get(notif.name, 0) + 1
+            
+            # Time-based statistics
+            if notif.datetime_obj:
+                dt = notif.datetime_obj.replace(tzinfo=None) if notif.datetime_obj.tzinfo else notif.datetime_obj
+                if dt > one_hour_ago:
+                    stats["recent_1h"] += 1
+                if dt > one_day_ago:
+                    stats["recent_24h"] += 1
+                    hour = dt.hour
+                    stats["hourly_distribution"][hour] = stats["hourly_distribution"].get(hour, 0) + 1
+        
+        # Sort and limit top items
+        stats["top_messages"] = dict(sorted(
+            stats["top_messages"].items(),
+            key=lambda x: x[1],
+            reverse=True
+        )[:10])
+        
+        return stats
+    
+    def _format_notification_summary(self, stats: Dict[str, Any], hours: int) -> str:
+        """Format notification summary with time context."""
         total = stats["total"]
+        
+        if total == 0:
+            return "No notifications found in the specified time period."
         
         output = f"""NOTIFICATION SUMMARY & STATISTICS
 
-=== OVERVIEW ===
+=== ANALYSIS PERIOD ===
+Time Window: Last {hours} hours ({hours/24:.1f} days)
 Total Notifications Analyzed: {total}
-Acknowledged: {stats['acknowledged']} ({stats['acknowledged']/total*100:.1f}%)
-Unacknowledged: {stats['unacknowledged']} ({stats['unacknowledged']/total*100:.1f}%)
-Urgent: {stats['urgent']} ({stats['urgent']/total*100:.1f}%)
-Volume Related: {stats['volume_related']} ({stats['volume_related']/total*100:.1f}%)
+Average Rate: {total/hours:.1f} notifications/hour
+
+=== OVERVIEW ===
+Acknowledged: {stats.get('acknowledged', 0)} ({stats.get('acknowledged', 0)/total*100:.1f}%)
+Unacknowledged: {stats.get('unacknowledged', 0)} ({stats.get('unacknowledged', 0)/total*100:.1f}%)
+Urgent: {stats.get('urgent', 0)} ({stats.get('urgent', 0)/total*100:.1f}%)
+Volume Related: {stats.get('volume_related', 0)} ({stats.get('volume_related', 0)/total*100:.1f}%)
 
 === RECENT ACTIVITY ===
-Last Hour: {stats['recent_1h']} notifications
-Last 24 Hours: {stats['recent_24h']} notifications
+Last Hour: {stats.get('recent_1h', 0)} notifications
+Last 24 Hours: {stats.get('recent_24h', 0)} notifications
 
 === BY PRIORITY ===
 """
-        for priority, count in sorted(stats["by_priority"].items(), key=lambda x: x[1], reverse=True):
-            percentage = count / total * 100
-            icon = "🔴" if priority in ["error", "critical"] else "🟡" if priority == "warning" else "🔵"
-            output += f"{icon} {priority.capitalize()}: {count} ({percentage:.1f}%)\n"
+        for priority in ['critical', 'error', 'warning', 'info']:
+            if priority in stats.get("by_priority", {}):
+                count = stats["by_priority"][priority]
+                percentage = count / total * 100
+                icon = "🔴" if priority in ["error", "critical"] else "🟡" if priority == "warning" else "🔵"
+                output += f"{icon} {priority.capitalize()}: {count} ({percentage:.1f}%)\n"
         
-        output += "\n=== BY TYPE ===\n"
-        for notif_type, count in sorted(stats["by_type"].items(), key=lambda x: x[1], reverse=True)[:5]:
-            percentage = count / total * 100
-            output += f"  {notif_type}: {count} ({percentage:.1f}%)\n"
-        
-        output += "\n=== TOP NOTIFICATION MESSAGES ===\n"
-        for msg_name, count in list(stats["top_messages"].items())[:10]:
+        output += "\n=== TOP NOTIFICATION TYPES ===\n"
+        for msg_name, count in list(stats.get("top_messages", {}).items())[:10]:
             percentage = count / total * 100
             output += f"  {msg_name}: {count} ({percentage:.1f}%)\n"
         
         output += "\n=== BY ORIGIN (TOP 10) ===\n"
-        origin_sorted = sorted(stats["by_origin"].items(), key=lambda x: x[1], reverse=True)[:10]
+        origin_sorted = sorted(stats.get("by_origin", {}).items(), key=lambda x: x[1], reverse=True)[:10]
         for origin, count in origin_sorted:
             percentage = count / total * 100
             output += f"  {origin}: {count} ({percentage:.1f}%)\n"
@@ -237,22 +415,21 @@ Last 24 Hours: {stats['recent_24h']} notifications
         # Add insights
         output += "\n=== INSIGHTS ===\n"
         
-        # Check for issues
-        if stats["unacknowledged"] > total * 0.5:
+        if stats.get("unacknowledged", 0) > total * 0.5:
             output += f"⚠️ High number of unacknowledged notifications ({stats['unacknowledged']}/{total})\n"
         
-        if stats["urgent"] > 0:
+        if stats.get("urgent", 0) > 0:
             output += f"🚨 {stats['urgent']} urgent notification(s) require attention\n"
         
-        # Most active origin
-        if stats["by_origin"]:
-            most_active = max(stats["by_origin"].items(), key=lambda x: x[1])
-            output += f"📊 Most active origin: {most_active[0]} ({most_active[1]} notifications)\n"
+        # Hourly pattern analysis
+        if stats.get("hourly_distribution"):
+            peak_hour = max(stats["hourly_distribution"].items(), key=lambda x: x[1])
+            output += f"📊 Peak activity hour: {peak_hour[0]:02d}:00 ({peak_hour[1]} notifications)\n"
         
-        # Most common issue
-        if stats["top_messages"]:
-            most_common = list(stats["top_messages"].items())[0]
-            output += f"📈 Most frequent: {most_common[0]} ({most_common[1]} occurrences)\n"
+        # Most active origin
+        if stats.get("by_origin"):
+            most_active = max(stats["by_origin"].items(), key=lambda x: x[1])
+            output += f"📍 Most active origin: {most_active[0]} ({most_active[1]} notifications)\n"
         
         return output
 
@@ -263,7 +440,7 @@ class AnalyzeNotificationPatternsTool(BaseTool):
     def __init__(self, api_client: NotificationsAPIClient):
         super().__init__(
             name="analyze_notification_patterns",
-            description="Analyze notification patterns to identify recurring issues, anomalies, and trends across filers and volumes."
+            description="Analyze notification patterns to identify recurring issues, anomalies, and trends. Automatically fetches appropriate amount of data based on time window."
         )
         self.api_client = api_client
     
@@ -278,7 +455,7 @@ class AnalyzeNotificationPatternsTool(BaseTool):
                 },
                 "focus": {
                     "type": "string",
-                    "enum": ["errors", "volumes", "filers", "licenses", "antivirus"],
+                    "enum": ["errors", "volumes", "filers", "licenses", "antivirus", "trends"],
                     "description": "Focus area for analysis"
                 }
             },
@@ -291,8 +468,20 @@ class AnalyzeNotificationPatternsTool(BaseTool):
             hours = arguments.get("hours", 24)
             focus = arguments.get("focus", "").lower()
             
-            # Use get_recent_notifications which internally calls get_notifications_filtered
-            notifications = await self.api_client.get_recent_notifications(hours=hours, limit=500)
+            # Use smart fetching for time window
+            if hasattr(self.api_client, 'get_recent_notifications'):
+                print(f"Using smart fetch for {hours} hours of notifications", file=sys.stderr)
+                notifications = await self.api_client.get_recent_notifications(
+                    hours=hours,
+                    limit=None  # Get all in time window
+                )
+            else:
+                # Fallback with higher limit for pattern analysis
+                max_items = min(hours * 50, 5000)  # Estimate based on time window
+                notifications = await self.api_client.get_recent_notifications(
+                    hours=hours,
+                    limit=max_items
+                )
             
             if not notifications:
                 return [TextContent(type="text", text=f"No notifications found in the last {hours} hours.")]
@@ -304,13 +493,13 @@ class AnalyzeNotificationPatternsTool(BaseTool):
             return self.format_error(f"Unexpected error: {str(e)}")
     
     def _analyze_patterns(self, notifications: List, hours: int, focus: str) -> str:
-        """Analyze notification patterns."""
+        """Analyze notification patterns with enhanced insights."""
         total = len(notifications)
         
         output = f"""NOTIFICATION PATTERN ANALYSIS
 
 === TIME PERIOD ===
-Last {hours} hours
+Last {hours} hours ({hours/24:.1f} days)
 Total Notifications: {total}
 Average Rate: {total/hours:.1f} notifications/hour
 
@@ -326,18 +515,76 @@ Average Rate: {total/hours:.1f} notifications/hour
             output += self._analyze_licenses(notifications)
         elif focus == "antivirus":
             output += self._analyze_antivirus(notifications)
+        elif focus == "trends":
+            output += self._analyze_trends(notifications, hours)
         else:
             # General analysis
             output += self._analyze_general(notifications)
         
         return output
     
+    def _analyze_trends(self, notifications: List, hours: int) -> str:
+        """Analyze trending patterns over time."""
+        from datetime import datetime, timedelta
+        
+        output = "=== TREND ANALYSIS ===\n\n"
+        
+        # Divide time window into buckets
+        bucket_hours = max(1, hours // 24)  # At least 1 hour buckets
+        buckets = {}
+        
+        now = datetime.now()
+        
+        for notif in notifications:
+            if notif.datetime_obj:
+                dt = notif.datetime_obj.replace(tzinfo=None) if notif.datetime_obj.tzinfo else notif.datetime_obj
+                hours_ago = (now - dt).total_seconds() / 3600
+                bucket = int(hours_ago // bucket_hours)
+                
+                if bucket not in buckets:
+                    buckets[bucket] = {"count": 0, "types": {}, "priorities": {}}
+                
+                buckets[bucket]["count"] += 1
+                buckets[bucket]["types"][notif.name] = buckets[bucket]["types"].get(notif.name, 0) + 1
+                buckets[bucket]["priorities"][notif.priority] = buckets[bucket]["priorities"].get(notif.priority, 0) + 1
+        
+        # Analyze trend
+        if buckets:
+            output += f"Time Buckets ({bucket_hours} hours each):\n"
+            for bucket in sorted(buckets.keys()):
+                time_desc = f"{bucket*bucket_hours}-{(bucket+1)*bucket_hours} hours ago"
+                data = buckets[bucket]
+                output += f"\n  {time_desc}: {data['count']} notifications\n"
+                
+                # Show top type for this period
+                if data["types"]:
+                    top_type = max(data["types"].items(), key=lambda x: x[1])
+                    output += f"    Top type: {top_type[0]} ({top_type[1]} times)\n"
+                
+                # Show priority breakdown
+                if data["priorities"]:
+                    priorities = ", ".join([f"{p}:{c}" for p, c in data["priorities"].items()])
+                    output += f"    Priorities: {priorities}\n"
+        
+        # Identify increasing/decreasing trends
+        if len(buckets) >= 3:
+            counts = [buckets[b]["count"] for b in sorted(buckets.keys())]
+            if counts[0] > counts[-1] * 1.5:
+                output += "\n📈 Trend: Increasing notification volume (50%+ increase)\n"
+            elif counts[-1] > counts[0] * 1.5:
+                output += "\n📉 Trend: Decreasing notification volume (50%+ decrease)\n"
+            else:
+                output += "\n➡️ Trend: Stable notification volume\n"
+        
+        return output
+    
+    # ... (keeping all the existing _analyze_* methods from the original)
     def _analyze_errors(self, notifications: List) -> str:
         """Analyze error patterns."""
         errors = [n for n in notifications if n.is_error or n.is_warning]
         
         output = "=== ERROR & WARNING ANALYSIS ===\n"
-        output += f"Total Errors/Warnings: {len(errors)}\n\n"
+        output += f"Total Errors/Warnings: {len(errors)} ({len(errors)/len(notifications)*100:.1f}% of all)\n\n"
         
         if not errors:
             output += "✅ No errors or warnings found\n"
@@ -350,11 +597,11 @@ Average Rate: {total/hours:.1f} notifications/hour
             by_type[err.name].append(err)
         
         output += "Error Types:\n"
-        for err_type, errs in sorted(by_type.items(), key=lambda x: len(x[1]), reverse=True):
+        for err_type, errs in sorted(by_type.items(), key=lambda x: len(x[1]), reverse=True)[:10]:
             output += f"  • {err_type}: {len(errs)} occurrences\n"
             # Show sample message
             if errs:
-                output += f"    Sample: {errs[0].message[:100]}\n"
+                output += f"    Sample: {errs[0].message[:100]}...\n"
         
         return output
     
@@ -379,11 +626,11 @@ Average Rate: {total/hours:.1f} notifications/hour
             by_volume[vol]["types"].add(notif.name)
             by_volume[vol]["origins"].add(notif.origin)
         
-        output += "By Volume:\n"
-        for vol, data in sorted(by_volume.items(), key=lambda x: x[1]["count"], reverse=True):
+        output += "By Volume (Top 10):\n"
+        for vol, data in sorted(by_volume.items(), key=lambda x: x[1]["count"], reverse=True)[:10]:
             output += f"\n  📁 {vol}: {data['count']} notifications\n"
-            output += f"     Types: {', '.join(data['types'])}\n"
-            output += f"     From: {', '.join(data['origins'])}\n"
+            output += f"     Types: {', '.join(list(data['types'])[:5])}\n"
+            output += f"     From: {', '.join(list(data['origins'])[:5])}\n"
         
         return output
     
@@ -407,7 +654,7 @@ Average Rate: {total/hours:.1f} notifications/hour
             priority = notif.priority
             by_origin[origin]["priorities"][priority] = by_origin[origin]["priorities"].get(priority, 0) + 1
         
-        for origin, data in sorted(by_origin.items(), key=lambda x: x[1]["count"], reverse=True):
+        for origin, data in sorted(by_origin.items(), key=lambda x: x[1]["count"], reverse=True)[:10]:
             output += f"📍 {origin}: {data['count']} notifications\n"
             
             # Show top notification types for this origin
@@ -428,7 +675,7 @@ Average Rate: {total/hours:.1f} notifications/hour
     
     def _analyze_licenses(self, notifications: List) -> str:
         """Analyze license-related patterns."""
-        license_notifs = [n for n in notifications if "LICENSE" in n.name.upper()]
+        license_notifs = [n for n in notifications if "LICENSE" in n.name.upper() or "license" in n.message.lower()]
         
         output = "=== LICENSE ANALYSIS ===\n"
         output += f"License-related Notifications: {len(license_notifs)}\n\n"
@@ -445,10 +692,10 @@ Average Rate: {total/hours:.1f} notifications/hour
                 by_origin[origin] = []
             by_origin[origin].append(notif)
         
-        for origin, notifs in sorted(by_origin.items()):
+        for origin, notifs in sorted(by_origin.items())[:5]:
             output += f"  {origin}:\n"
             for notif in notifs[:3]:
-                output += f"    • [{notif.date}] {notif.message}\n"
+                output += f"    • [{notif.date}] {notif.message[:100]}...\n"
             if len(notifs) > 3:
                 output += f"    ... and {len(notifs) - 3} more\n"
         
@@ -456,7 +703,7 @@ Average Rate: {total/hours:.1f} notifications/hour
     
     def _analyze_antivirus(self, notifications: List) -> str:
         """Analyze antivirus-related patterns."""
-        av_notifs = [n for n in notifications if "AV_" in n.name or "antivirus" in n.message.lower()]
+        av_notifs = [n for n in notifications if "AV_" in n.name or "antivirus" in n.message.lower() or "virus" in n.message.lower()]
         
         output = "=== ANTIVIRUS ANALYSIS ===\n"
         output += f"Antivirus-related Notifications: {len(av_notifs)}\n\n"
@@ -465,14 +712,14 @@ Average Rate: {total/hours:.1f} notifications/hour
             output += "No antivirus notifications found\n"
             return output
         
-        # Analyze AV skip patterns
+        # Analyze AV patterns
         av_skips = [n for n in av_notifs if "AV_SKIP" in n.name]
         av_scans = [n for n in av_notifs if "AV_SCAN" in n.name]
-        av_violations = [n for n in av_notifs if "VIOLATION" in n.name.upper()]
+        av_violations = [n for n in av_notifs if "VIOLATION" in n.name.upper() or "threat" in n.message.lower()]
         
         output += f"  Skipped Scans: {len(av_skips)}\n"
         output += f"  Completed Scans: {len(av_scans)}\n"
-        output += f"  Violations: {len(av_violations)}\n\n"
+        output += f"  Violations/Threats: {len(av_violations)}\n\n"
         
         # Show affected volumes
         volumes = {}
@@ -482,18 +729,20 @@ Average Rate: {total/hours:.1f} notifications/hour
         
         if volumes:
             output += "Affected Volumes:\n"
-            for vol, count in sorted(volumes.items(), key=lambda x: x[1], reverse=True):
+            for vol, count in sorted(volumes.items(), key=lambda x: x[1], reverse=True)[:5]:
                 output += f"  • {vol}: {count} notifications\n"
         
         if av_violations:
-            output += "\n⚠️ VIOLATIONS DETECTED:\n"
+            output += "\n⚠️ VIOLATIONS/THREATS DETECTED:\n"
             for viol in av_violations[:5]:
-                output += f"  [{viol.date}] {viol.origin}: {viol.message}\n"
+                output += f"  [{viol.date}] {viol.origin}: {viol.message[:100]}...\n"
         
         return output
     
     def _analyze_general(self, notifications: List) -> str:
         """General pattern analysis."""
+        from datetime import datetime
+        
         output = "=== GENERAL PATTERNS ===\n\n"
         
         # Time-based patterns (hourly distribution)
@@ -532,9 +781,19 @@ Average Rate: {total/hours:.1f} notifications/hour
         urgent = [n for n in notifications if n.urgent]
         
         if unack:
-            output += f"📌 {len(unack)} unacknowledged notifications\n"
+            output += f"📌 {len(unack)} unacknowledged notifications ({len(unack)/len(notifications)*100:.1f}%)\n"
         if urgent:
-            output += f"🚨 {len(urgent)} urgent notifications\n"
+            output += f"🚨 {len(urgent)} urgent notifications ({len(urgent)/len(notifications)*100:.1f}%)\n"
+        
+        # Summary recommendation
+        output += "\n=== RECOMMENDATIONS ===\n"
+        if len(unack) > len(notifications) * 0.5:
+            output += "• Review and acknowledge pending notifications\n"
+        if urgent:
+            output += "• Address urgent notifications immediately\n"
+        if repetitive:
+            top_repeat = sorted(repetitive, key=lambda x: x[1], reverse=True)[0]
+            output += f"• Investigate recurring issue: {top_repeat[0][0]} from {top_repeat[0][1]}\n"
         
         if not patterns and not unack and not urgent:
             output += "✅ No concerning patterns detected\n"
