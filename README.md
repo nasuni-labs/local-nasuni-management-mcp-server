@@ -380,7 +380,7 @@ On your Claude Desktop Client -> Settings -> Developer -> Edit Config -> claude_
 After updating the configuration file, restart the Claude Desktop application to load the new MCP server.
 
 ## Setup Complete
-Test your Nasuni Management MCP Server, ask Claude "List all my filers withd details"
+Test your Nasuni Management MCP Server, ask Claude "List all my filers with details"
 
 ## Available Tools
 
