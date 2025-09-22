@@ -106,7 +106,9 @@ sudo pacman -S python python-pip
 
 ## Installation 
 There are two options to install and configure the NMC MCP Server:
+
 **1. Automated Setup (Recommended)**
+
 **2. Manual Setup**
 
 ## Option 1: Automated Setup (Recommended)
