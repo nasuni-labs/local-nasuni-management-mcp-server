@@ -15,7 +15,7 @@ from api.auth_api import AuthAPIClient
 class MCPServer:
     """Main MCP Server class with improved tool management."""
     
-    def __init__(self, name: str = "nmc-mcp-server"):
+    def __init__(self, name: str = "nasuni-management-mcp-server"):
         self.server = Server(name)
         self.tool_registry = ToolRegistry()
         self._setup_tools()

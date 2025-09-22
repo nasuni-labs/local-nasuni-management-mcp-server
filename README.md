@@ -129,7 +129,7 @@ python3 installer.py
 During installation, you'll be prompted for:
 
 1. **Installation directory** 
-   - Default: `~/nmc-mcp-server` (Mac/Linux) or `%USERPROFILE%\nmc-mcp-server` (Windows)
+   - Default: `~/nasuni-management-mcp-server` (Mac/Linux) or `%USERPROFILE%\nasuni-management-mcp-server` (Windows)
    - Press Enter to accept default or specify a custom path
 
 2. **NMC Server URL**
@@ -161,7 +161,7 @@ If Claude Desktop was not installed when you ran the installer:
 1. Install Claude Desktop from [claude.ai/download](https://claude.ai/download)
 2. Run the configuration script that was created:
    ```bash
-   python ~/nmc-mcp-server/configure_claude.py
+   python ~/nasuni-management-mcp-server/configure_claude.py
    ```
 
 
@@ -170,15 +170,15 @@ If Claude Desktop was not installed when you ran the installer:
 ### 1. Clone the Repository
 
 ```bash
-git clone <repository-url>
-cd nasuni-management-mcp-desktop-server
+git clone https://github.com/nasuni-labs/local-nasuni-management-mcp-server.git nasuni-management-mcp-server
+cd nasuni-management-mcp-server
 ```
 
 ### 2. Create Virtual Environment (Recommended)
 
 ```bash
 # Create virtual environment
-python3 -m venv nasuni-management-mcp-desktop-server-env
+python3 -m venv nasuni-management-mcp-server-env
 
 # Activate virtual environment
 # On macOS/Linux:
@@ -254,7 +254,7 @@ API_TIMEOUT=30.0
 
 ### Authentication Setup
 
-The NMC MCP Server uses **username and password authentication** to connect to your NMC instance:
+The Nasuni Management MCP Server uses **username and password authentication** to connect to your NMC instance:
 
 1. **Username**: Your NMC login username
 2. **Password**: Your NMC login password
@@ -317,7 +317,7 @@ which python3
 which python
 
 # If using a virtual environment (recommended), activate it first:
-source nasuni-management-mcp-desktop-server/bin/activate  # macOS/Linux
+source nasuni-management-mcp-server/bin/activate  # macOS/Linux
 # nmc-mcp-env\Scripts\activate   # Windows
 which python
 ```
@@ -335,9 +335,9 @@ Add this configuration to your `claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
-    "nmc-mcp-server": {
+    "nasuni-management": {
       "command": "/path/to/your/python/executable",
-      "args": ["/full/path/to/nmc-mcp-server/main.py"]
+      "args": ["/full/path/to/nasuni-management-mcp-server/main.py"]
     }
   }
 }
@@ -349,9 +349,9 @@ Add this configuration to your `claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
-    "nmc-mcp-server": {
-      "command": "/Users/john/Projects/nasuni-management-mcp-desktop-server/nasuni-management-mcp-desktop-server-env/bin/python",
-      "args": ["/Users/john/Projects/nasuni-management-mcp-desktop-server/main.py"]
+    "nasuni-management": {
+      "command": "/Users/john/Projects/nasuni-management-mcp-server/nasuni-management-mcp-server-env/bin/python",
+      "args": ["/Users/john/Projects/nasuni-management-mcp-server/main.py"]
     }
   }
 }
@@ -361,9 +361,9 @@ Add this configuration to your `claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
-    "nmc-mcp-server": {
+    "nasuni-management-mcp-server": {
       "command": "/opt/homebrew/bin/python3",
-      "args": ["/Users/john/Projects/nasuni-management-mcp-desktop-server/main.py"]
+      "args": ["/Users/john/Projects/nasuni-management-mcp-server/main.py"]
     }
   }
 }
@@ -379,7 +379,7 @@ On your Claude Desktop Client -> Settings -> Developer -> Edit Config -> claude_
 After updating the configuration file, restart the Claude Desktop application to load the new MCP server.
 
 ## Setup Complete
-Test your NMC MCP Server, ask Claude "List all my filers withd details"
+Test your Nasuni Management MCP Server, ask Claude "List all my filers withd details"
 
 ## Available Tools
 
@@ -393,6 +393,7 @@ Test your NMC MCP Server, ask Claude "List all my filers withd details"
 
 **Required Permissions:** 
 - Manage All Filers or a set of Filers
+- Filer Access (Manage All Filers (super user) or intended subset of Filers)
 - Manage Volume Settings (Can't add/delete). 
 
 ### Volume Operations
@@ -403,6 +404,7 @@ Test your NMC MCP Server, ask Claude "List all my filers withd details"
 
 **Required Permissions:** 
 - Manage All Filers or a set of Filers
+- Filer Access (Manage All Filers (super user) or intended subset of Filers)
 - Manage Volume Settings (Can't add/delete). 
 
 ### Share Management
@@ -413,6 +415,7 @@ Test your NMC MCP Server, ask Claude "List all my filers withd details"
 
 **Required Permissions:** 
 - Manage All Filers or a set of Filers
+- Filer Access (Manage All Filers (super user) or intended subset of Filers)
 - Manage Shares, Exports, FTP and ISCSI
 
 ### Health Monitoring
@@ -423,6 +426,7 @@ Test your NMC MCP Server, ask Claude "List all my filers withd details"
 
 **Required Permissions:** 
 - Manage All Filers or a set of Filers
+- Filer Access (Manage All Filers (super user) or intended subset of Filers)
 
 ### Authentication & Security
 - `refresh_auth_token` - Refresh authentication token

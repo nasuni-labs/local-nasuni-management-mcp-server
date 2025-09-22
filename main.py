@@ -21,7 +21,7 @@ async def main():
     logger.debug("check")
     try:
         # Create and configure the server
-        mcp_server = MCPServer("nmc-mcp-server")
+        mcp_server = MCPServer("nasuni-management-mcp-server")
         server = mcp_server.get_server()
         
         print(f"✅ Server initialized with {len(mcp_server.tool_registry.get_tool_names())} tools", file=sys.stderr)

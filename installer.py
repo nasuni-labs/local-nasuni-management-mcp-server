@@ -110,7 +110,7 @@ class Installer:
         """Print welcome header"""
         try:
             print(f"\n{Colors.CYAN}{'='*60}{Colors.ENDC}")
-            print(f"{Colors.BOLD}{Colors.HEADER}🚀 NMC MCP Server Universal Installer{Colors.ENDC}")
+            print(f"{Colors.BOLD}{Colors.HEADER}🚀 Nasuni Management MCP Server Universal Installer{Colors.ENDC}")
             print(f"{Colors.CYAN}{'='*60}{Colors.ENDC}")
             print(f"OS: {Colors.GREEN}{self.os_type}{Colors.ENDC}")
             print(f"Architecture: {Colors.GREEN}{self.arch}{Colors.ENDC}")
@@ -120,7 +120,7 @@ class Installer:
         except Exception as e:
             # Fallback without colors if there's any issue
             print("\n" + "="*60)
-            print("NMC MCP Server Universal Installer")
+            print("Nasuni Management MCP Server Universal Installer")
             print("="*60)
             print(f"OS: {self.os_type}")
             print(f"Architecture: {self.arch}")
@@ -195,40 +195,6 @@ class Installer:
             print("\nArch:")
             print("  sudo pacman -S python python-pip")
     
-    def try_git_clone(self) -> bool:
-        """Try to clone using git if available"""
-        print(f"{Colors.BLUE}Checking for git...{Colors.ENDC}")
-        
-        # Check if git is available
-        git_cmd = shutil.which("git")
-        if not git_cmd:
-            print(f"{Colors.WARNING}Git not found, using direct download{Colors.ENDC}")
-            return False
-        
-        print(f"{Colors.GREEN}Git found, cloning repository...{Colors.ENDC}")
-        
-        try:
-            # Git clone with progress
-            result = subprocess.run(
-                ["git", "clone", "--progress", f"{GITHUB_REPO}.git", str(self.install_dir)],
-                capture_output=False,  # Show git's progress output
-                text=True,
-                timeout=300  # 5 minute timeout
-            )
-            
-            if result.returncode == 0:
-                print(f"{Colors.GREEN}✅ Repository cloned successfully{Colors.ENDC}")
-                return True
-            else:
-                print(f"{Colors.WARNING}Git clone failed, trying direct download{Colors.ENDC}")
-                return False
-                
-        except subprocess.TimeoutExpired:
-            print(f"{Colors.WARNING}Git clone timed out, trying direct download{Colors.ENDC}")
-            return False
-        except Exception as e:
-            print(f"{Colors.WARNING}Git clone error: {e}{Colors.ENDC}")
-            return False
     
     def download_from_github(self) -> bool:
         """Download latest code from GitHub"""
@@ -938,7 +904,7 @@ API_TIMEOUT=30.0
             print(f"{Colors.RED}❌ Could not create config directory: {e}{Colors.ENDC}")
             return None
 
-
+    
     def safe_update_claude_config(self, config_file: Path, new_server_config: Dict) -> bool:
         """
         Safely update Claude Desktop config without removing existing configurations
@@ -968,10 +934,10 @@ API_TIMEOUT=30.0
                 config["mcpServers"] = {}
                 print(f"{Colors.BLUE}➕ Added mcpServers section{Colors.ENDC}")
             
-            # Check if nasuni-management-mcp-server already exists
-            if "nasuni-management-mcp-server" in config["mcpServers"]:
-                old_config = config["mcpServers"]["nasuni-management-mcp-server"]
-                print(f"{Colors.WARNING}⚠️ Found existing nasuni-management-mcp-server configuration{Colors.ENDC}")
+            # Check if nasuni-management already exists
+            if "nasuni-management" in config["mcpServers"]:
+                old_config = config["mcpServers"]["nasuni-management"]
+                print(f"{Colors.WARNING}⚠️ Found existing nasuni-management configuration{Colors.ENDC}")
                 print(f"   Current command: {old_config.get('command', 'N/A')}")
                 print(f"   Current path: {old_config.get('args', ['N/A'])[0] if old_config.get('args') else 'N/A'}")
                 print(f"   New command: {new_server_config['command']}")
@@ -987,7 +953,7 @@ API_TIMEOUT=30.0
                     print(f"\n{Colors.YELLOW}What would you like to do?{Colors.ENDC}")
                     print("1. Replace with new configuration (recommended for updates)")
                     print("2. Keep existing configuration")
-                    print("3. Save as 'nasuni-management-mcp-server-new' (keep both)")
+                    print("3. Save as 'nasuni-management-new' (keep both)")
                     
                     try:
                         choice = input("Choice [1]: ").strip() or "1"
@@ -1000,29 +966,29 @@ API_TIMEOUT=30.0
                         return True
                     elif choice == "3":
                         # Save with different name
-                        alternative_name = "nasuni-management-mcp-server-new"
+                        alternative_name = "nasuni-management-new"
                         counter = 1
                         while f"{alternative_name}" in config["mcpServers"]:
                             counter += 1
-                            alternative_name = f"nasuni-management-mcp-server-{counter}"
+                            alternative_name = f"nasuni-management-{counter}"
                         
                         config["mcpServers"][alternative_name] = new_server_config
                         print(f"{Colors.GREEN}✅ Added as '{alternative_name}' (keeping both){Colors.ENDC}")
                     else:
                         # Replace (default)
                         print(f"{Colors.BLUE}📝 Replacing existing configuration...{Colors.ENDC}")
-                        config["mcpServers"]["nasuni-management-mcp-server"] = new_server_config
+                        config["mcpServers"]["nasuni-management"] = new_server_config
                 else:
                     # Non-interactive mode: show warning but proceed with update
                     print(f"{Colors.YELLOW}📝 Non-interactive mode: updating configuration{Colors.ENDC}")
-                    config["mcpServers"]["nasuni-management-mcp-server"] = new_server_config
+                    config["mcpServers"]["nasuni-management"] = new_server_config
             else:
                 # No existing config, just add it
-                config["mcpServers"]["nasuni-management-mcp-server"] = new_server_config
-                print(f"{Colors.GREEN}✅ Added nasuni-management-mcp-server configuration{Colors.ENDC}")
+                config["mcpServers"]["nasuni-management"] = new_server_config
+                print(f"{Colors.GREEN}✅ Added nasuni-management configuration{Colors.ENDC}")
             
             # Show summary of other configured servers
-            other_servers = [k for k in config["mcpServers"].keys() if k != "nasuni-management-mcp-server"]
+            other_servers = [k for k in config["mcpServers"].keys() if k != "nasuni-management"]
             if other_servers:
                 print(f"{Colors.CYAN}ℹ️ Preserving {len(other_servers)} other MCP server(s):{Colors.ENDC}")
                 for server in other_servers[:5]:  # Show first 5
@@ -1045,6 +1011,7 @@ API_TIMEOUT=30.0
         except Exception as e:
             print(f"{Colors.RED}❌ Failed to update config: {e}{Colors.ENDC}")
             return False
+
 
     def configure_claude_desktop(self) -> bool:
         """Enhanced Claude Desktop configuration"""
@@ -1125,180 +1092,182 @@ API_TIMEOUT=30.0
             print(f"\n{Colors.YELLOW}Please add this configuration manually:{Colors.ENDC}")
             self.print_manual_config()
             return False
+        
+
 
     def create_configure_script(self):
         """Create an enhanced standalone script to configure Claude Desktop later"""
         configure_script = self.install_dir / "configure_claude.py"
         
         script_content = f'''#!/usr/bin/env python3
-"""
-Standalone script to configure Claude Desktop for NMC MCP Server
-Run this after installing Claude Desktop
-Enhanced version with better detection and safe config updates
-"""
+    """
+    Standalone script to configure Claude Desktop for Nasuni Management MCP Server
+    Run this after installing Claude Desktop
+    Enhanced version with better detection and safe config updates
+    """
 
-import json
-import sys
-import shutil
-import platform
-from pathlib import Path
-from typing import Optional, List, Dict, Tuple
+    import json
+    import sys
+    import shutil
+    import platform
+    from pathlib import Path
+    from typing import Optional, List, Dict, Tuple
 
-def find_claude_desktop() -> Tuple[bool, List[str]]:
-    """Find Claude Desktop installation"""
-    os_type = platform.system()
-    home = Path.home()
-    claude_installed = False
-    claude_locations = []
-    
-    if os_type == "Darwin":  # macOS
-        app_locations = [
-            Path("/Applications/Claude.app"),
-            home / "Applications" / "Claude.app",
-            Path("/System/Applications/Claude.app"),
-            Path("/Applications/Setapp/Claude.app"),
-        ]
-        for loc in app_locations:
-            if loc.exists():
-                claude_installed = True
-                claude_locations.append(str(loc))
-                
-    elif os_type == "Windows":
-        import os
-        program_locations = []
-        if os.environ.get("PROGRAMFILES"):
-            program_locations.append(Path(os.environ["PROGRAMFILES"]) / "Claude")
-        if os.environ.get("LOCALAPPDATA"):
-            program_locations.append(Path(os.environ["LOCALAPPDATA"]) / "Claude")
-            program_locations.append(Path(os.environ["LOCALAPPDATA"]) / "Programs" / "Claude")
+    def find_claude_desktop() -> Tuple[bool, List[str]]:
+        """Find Claude Desktop installation"""
+        os_type = platform.system()
+        home = Path.home()
+        claude_installed = False
+        claude_locations = []
         
-        for base in program_locations:
-            if base.exists():
-                for exe_name in ["Claude.exe", "claude.exe"]:
-                    if (base / exe_name).exists():
-                        claude_installed = True
-                        claude_locations.append(str(base / exe_name))
-                        
-    else:  # Linux
-        binary_locations = [
-            "/usr/bin/claude",
-            "/usr/local/bin/claude",
-            "/opt/claude/claude",
-            str(home / ".local" / "bin" / "claude"),
-        ]
-        for path in binary_locations:
-            if Path(path).exists():
-                claude_installed = True
-                claude_locations.append(path)
-    
-    return claude_installed, claude_locations
-
-def get_config_paths() -> List[Path]:
-    """Get possible config file paths"""
-    os_type = platform.system()
-    home = Path.home()
-    
-    if os_type == "Darwin":
-        return [
-            home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json",
-            home / ".claude" / "claude_desktop_config.json",
-        ]
-    elif os_type == "Windows":
-        import os
-        return [
-            Path(os.environ.get("APPDATA", home / "AppData" / "Roaming")) / "Claude" / "claude_desktop_config.json",
-            Path(os.environ.get("LOCALAPPDATA", home / "AppData" / "Local")) / "Claude" / "claude_desktop_config.json",
-        ]
-    else:
-        return [
-            home / ".config" / "Claude" / "claude_desktop_config.json",
-            home / ".config" / "claude" / "claude_desktop_config.json",
-            home / ".claude" / "claude_desktop_config.json",
-        ]
-
-def configure_claude():
-    python_cmd = "{self.python_cmd}"
-    main_py = "{self.install_dir / 'main.py'}"
-    cwd = "{self.install_dir}"
-    
-    # Check if Claude is installed
-    installed, locations = find_claude_desktop()
-    if not installed:
-        print("❌ Claude Desktop not found")
-        print("Please install from: https://claude.ai/download")
-        return False
-    
-    print(f"✅ Claude Desktop found")
-    
-    # Find config file
-    config_paths = get_config_paths()
-    config_file = None
-    
-    for path in config_paths:
-        if path.exists():
-            config_file = path
-            print(f"✅ Found config: {{path}}")
-            break
-        elif path.parent.exists():
-            config_file = path
-            print(f"📝 Will create config at: {{path}}")
-            break
-    
-    if not config_file:
-        # Create directory for first option
-        config_file = config_paths[0]
-        config_file.parent.mkdir(parents=True, exist_ok=True)
-        print(f"📁 Created config directory: {{config_file.parent}}")
-    
-    # Load or create config
-    if config_file.exists():
-        # Backup existing config
-        backup = config_file.with_suffix('.json.backup')
-        shutil.copy2(config_file, backup)
-        print(f"📋 Backed up to: {{backup}}")
+        if os_type == "Darwin":  # macOS
+            app_locations = [
+                Path("/Applications/Claude.app"),
+                home / "Applications" / "Claude.app",
+                Path("/System/Applications/Claude.app"),
+                Path("/Applications/Setapp/Claude.app"),
+            ]
+            for loc in app_locations:
+                if loc.exists():
+                    claude_installed = True
+                    claude_locations.append(str(loc))
+                    
+        elif os_type == "Windows":
+            import os
+            program_locations = []
+            if os.environ.get("PROGRAMFILES"):
+                program_locations.append(Path(os.environ["PROGRAMFILES"]) / "Claude")
+            if os.environ.get("LOCALAPPDATA"):
+                program_locations.append(Path(os.environ["LOCALAPPDATA"]) / "Claude")
+                program_locations.append(Path(os.environ["LOCALAPPDATA"]) / "Programs" / "Claude")
+            
+            for base in program_locations:
+                if base.exists():
+                    for exe_name in ["Claude.exe", "claude.exe"]:
+                        if (base / exe_name).exists():
+                            claude_installed = True
+                            claude_locations.append(str(base / exe_name))
+                            
+        else:  # Linux
+            binary_locations = [
+                "/usr/bin/claude",
+                "/usr/local/bin/claude",
+                "/opt/claude/claude",
+                str(home / ".local" / "bin" / "claude"),
+            ]
+            for path in binary_locations:
+                if Path(path).exists():
+                    claude_installed = True
+                    claude_locations.append(path)
         
-        with open(config_file, 'r', encoding='utf-8') as f:
-            try:
-                config = json.load(f)
-            except:
-                print("⚠️ Invalid JSON, creating new config")
-                config = {{}}
-    else:
-        config = {{}}
-    
-    # Add MCP server (preserving existing servers)
-    if "mcpServers" not in config:
-        config["mcpServers"] = {{}}
-    
-    # Show existing servers
-    existing = [k for k in config["mcpServers"].keys() if k != "nasuni-management-mcp-server"]
-    if existing:
-        print(f"ℹ️ Preserving {{len(existing)}} existing MCP server(s)")
-    
-    config["mcpServers"]["nasuni-management-mcp-server"] = {{
-        "command": python_cmd,
-        "args": [main_py],
-        "cwd": cwd
-    }}
-    
-    # Save config
-    with open(config_file, 'w', encoding='utf-8') as f:
-        json.dump(config, f, indent=2, ensure_ascii=False)
-        f.write('\\n')
-    
-    print("✅ Claude Desktop configured successfully!")
-    print(f"   Config: {{config_file}}")
-    print("\\n🚀 Please restart Claude Desktop to use NMC tools")
-    return True
+        return claude_installed, claude_locations
 
-if __name__ == "__main__":
-    try:
-        success = configure_claude()
-        sys.exit(0 if success else 1)
-    except Exception as e:
-        print(f"❌ Error: {{e}}")
-        sys.exit(1)
-'''
+    def get_config_paths() -> List[Path]:
+        """Get possible config file paths"""
+        os_type = platform.system()
+        home = Path.home()
+        
+        if os_type == "Darwin":
+            return [
+                home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json",
+                home / ".claude" / "claude_desktop_config.json",
+            ]
+        elif os_type == "Windows":
+            import os
+            return [
+                Path(os.environ.get("APPDATA", home / "AppData" / "Roaming")) / "Claude" / "claude_desktop_config.json",
+                Path(os.environ.get("LOCALAPPDATA", home / "AppData" / "Local")) / "Claude" / "claude_desktop_config.json",
+            ]
+        else:
+            return [
+                home / ".config" / "Claude" / "claude_desktop_config.json",
+                home / ".config" / "claude" / "claude_desktop_config.json",
+                home / ".claude" / "claude_desktop_config.json",
+            ]
+
+    def configure_claude():
+        python_cmd = "{self.python_cmd}"
+        main_py = "{self.install_dir / 'main.py'}"
+        cwd = "{self.install_dir}"
+        
+        # Check if Claude is installed
+        installed, locations = find_claude_desktop()
+        if not installed:
+            print("❌ Claude Desktop not found")
+            print("Please install from: https://claude.ai/download")
+            return False
+        
+        print(f"✅ Claude Desktop found")
+        
+        # Find config file
+        config_paths = get_config_paths()
+        config_file = None
+        
+        for path in config_paths:
+            if path.exists():
+                config_file = path
+                print(f"✅ Found config: {{path}}")
+                break
+            elif path.parent.exists():
+                config_file = path
+                print(f"📝 Will create config at: {{path}}")
+                break
+        
+        if not config_file:
+            # Create directory for first option
+            config_file = config_paths[0]
+            config_file.parent.mkdir(parents=True, exist_ok=True)
+            print(f"📁 Created config directory: {{config_file.parent}}")
+        
+        # Load or create config
+        if config_file.exists():
+            # Backup existing config
+            backup = config_file.with_suffix('.json.backup')
+            shutil.copy2(config_file, backup)
+            print(f"📋 Backed up to: {{backup}}")
+            
+            with open(config_file, 'r', encoding='utf-8') as f:
+                try:
+                    config = json.load(f)
+                except:
+                    print("⚠️ Invalid JSON, creating new config")
+                    config = {{}}
+        else:
+            config = {{}}
+        
+        # Add MCP server (preserving existing servers)
+        if "mcpServers" not in config:
+            config["mcpServers"] = {{}}
+        
+        # Show existing servers
+        existing = [k for k in config["mcpServers"].keys() if k != "nasuni-management"]
+        if existing:
+            print(f"ℹ️ Preserving {{len(existing)}} existing MCP server(s)")
+        
+        config["mcpServers"]["nasuni-management"] = {{
+            "command": python_cmd,
+            "args": [main_py],
+            "cwd": cwd
+        }}
+        
+        # Save config
+        with open(config_file, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+            f.write('\\n')
+        
+        print("✅ Claude Desktop configured successfully!")
+        print(f"   Config: {{config_file}}")
+        print("\\n🚀 Please restart Claude Desktop to use Nasuni Management MCP tools")
+        return True
+
+    if __name__ == "__main__":
+        try:
+            success = configure_claude()
+            sys.exit(0 if success else 1)
+        except Exception as e:
+            print(f"❌ Error: {{e}}")
+            sys.exit(1)
+    '''
         
         try:
             configure_script.write_text(script_content, encoding="utf-8")
@@ -1314,7 +1283,7 @@ if __name__ == "__main__":
         
         config_json = {
             "mcpServers": {
-                "nasuni-management-mcp-server": {
+                "nasuni-management": {
                     "command": self.python_cmd,
                     "args": [str(main_py)],
                     "cwd": str(self.install_dir)
@@ -1327,7 +1296,7 @@ if __name__ == "__main__":
         print(f"{Colors.CYAN}{'='*60}{Colors.ENDC}")
         print("\nAdd this to your existing mcpServers section:")
         print(f"{Colors.YELLOW}")
-        print(json.dumps(config_json["mcpServers"]["nasuni-management-mcp-server"], indent=2))
+        print(json.dumps(config_json["mcpServers"]["nasuni-management"], indent=2))
         print(f"{Colors.ENDC}")
         print(f"\nOr if you have no existing config, use this complete file:")
         print(f"{Colors.YELLOW}")
@@ -1395,7 +1364,7 @@ if __name__ == "__main__":
             print(f"  1. Download Claude Desktop: {Colors.CYAN}https://claude.ai/download{Colors.ENDC}")
             print(f"  2. Install and run Claude Desktop once")
             print(f"  3. Run: {Colors.GREEN}{self.python_cmd} {self.install_dir}/configure_claude.py{Colors.ENDC}")
-            print(f"\n{Colors.BLUE}The NMC MCP Server is ready and waiting for Claude Desktop{Colors.ENDC}")
+            print(f"\n{Colors.BLUE}The Nasuni Management MCP Server is ready and waiting for Claude Desktop{Colors.ENDC}")
         
         print(f"\n{Colors.HEADER}📚 Useful Commands:{Colors.ENDC}")
         print(f"  • Test connection: {self.python_cmd} {self.install_dir}/main.py")
@@ -1460,7 +1429,7 @@ if __name__ == "__main__":
 
 def main():
     """Main entry point"""
-    parser = argparse.ArgumentParser(description='NMC MCP Server Universal Installer')
+    parser = argparse.ArgumentParser(description='Nasuni Management MCP Server Universal Installer')
     parser.add_argument('-d', '--directory', help='Installation directory')
     parser.add_argument('-n', '--non-interactive', action='store_true', 
                        help='Run in non-interactive mode (use defaults)')
