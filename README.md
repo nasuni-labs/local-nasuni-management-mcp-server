@@ -106,8 +106,8 @@ sudo pacman -S python python-pip
 
 ## Installation 
 There are two options to install and configure the NMC MCP Server:
-- **1. Automated Setup (Recommended)**
-- **2. Manual Setup**
+**1. Automated Setup (Recommended)**
+**2. Manual Setup**
 
 ## Option 1: Automated Setup (Recommended)
 The automated installer handles all setup steps including downloading the code, creating virtual environment, installing dependencies, and configuring Claude Desktop.
