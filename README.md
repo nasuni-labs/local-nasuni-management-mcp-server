@@ -167,11 +167,17 @@ If Claude Desktop was not installed when you ran the installer:
 
 ## Manual Setup
 
-### 1. Clone the Repository
+### 1. Clone or Download the Repository
 
+**Clone**
 ```bash
 git clone https://github.com/nasuni-labs/local-nasuni-management-mcp-server.git nasuni-management-mcp-server
 cd nasuni-management-mcp-server
+```
+**Or Download**
+Download the zip file and unzip in a new folder 'nasuni-management-mcp-server'
+```bash
+https://github.com/nasuni-labs/local-nasuni-management-mcp-server/archive/refs/heads/main.zip
 ```
 
 ### 2. Create Virtual Environment (Recommended)
