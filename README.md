@@ -105,7 +105,7 @@ sudo pacman -S python python-pip
 - **Account Types**: Both native and domain accounts are supported for NMC API authentication (SSO accounts are **not supported** via the NMC API)
 
 ## Installation 
-There are two options to install and configure the NMC MCP Server:
+There are two options to install and configure the Nasuni Management MCP Server:
 
 **1. Automated Setup (Recommended)**
 
