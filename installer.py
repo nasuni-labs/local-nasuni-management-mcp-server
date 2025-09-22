@@ -24,8 +24,8 @@ import tempfile
 import time
 
 # GitHub repository URL
-GITHUB_REPO = "https://github.com/nasuni-labs/nasuni-management-local-mcp-server"
-GITHUB_ARCHIVE = "https://github.com/nasuni-labs/nasuni-management-local-mcp-server/archive/refs/heads/main.zip"
+GITHUB_REPO = "https://github.com/nasuni-labs/local-nasuni-management-mcp-server"
+GITHUB_ARCHIVE = "https://github.com/nasuni-labs/local-nasuni-management-mcp-server/archive/refs/heads/main.zip"
 
 # ANSI color codes for terminal output
 class Colors:

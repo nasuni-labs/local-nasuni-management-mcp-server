@@ -101,7 +101,7 @@ sudo pacman -S python python-pip
 
 ### NMC API Requirements  
 - **NMC Credentials**: Accessing the NMC API requires a user who is a member of an NMC group that has the "Enable NMC API Access" permission enabled
-- **API Permissions**: Along with 'Enable NMC API Access', the API users must also have the corresponding NMC permission for each action they perform. For a granular permission set, refer to the [Available Tools](https://github.com/nasuni-labs/nasuni-management-local-mcp-server/?tab=readme-ov-file#available-tools) section.
+- **API Permissions**: Along with 'Enable NMC API Access', the API users must also have the corresponding NMC permission for each action they perform. For a granular permission set, refer to the [Available Tools](https://github.com/nasuni-labs/local-nasuni-management-mcp-server/?tab=readme-ov-file#available-tools) section.
 - **Account Types**: Both native and domain accounts are supported for NMC API authentication (SSO accounts are **not supported** via the NMC API)
 
 ## Installation 
