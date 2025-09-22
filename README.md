@@ -184,7 +184,7 @@ python3 -m venv nasuni-management-mcp-server-env
 # On macOS/Linux:
 source nasuni-management-mcp-desktop-server-env/bin/activate
 # On Windows:
-asuni-management-mcp-env\Scripts\activate
+nasuni-management-mcp-env\Scripts\activate
 ```
 
 ### 3. Install Dependencies
@@ -259,12 +259,13 @@ The Nasuni Management MCP Server uses **username and password authentication** t
 1. **Username**: Your NMC login username
 2. **Password**: Your NMC login password
 3. **Permissions**: Ensure the user account has:
-   - "Enable NMC API Access" permission
+   - 'Enable NMC API Access' permission
+   - Filer Access ('Manage All Filers (super user)' or intended subset of Filers)
    - Appropriate permissions for the operations you want to perform
 
 **Security Note**: The credentials are stored in your local `.env` file and are only used to authenticate with your NMC server.
 
-### Verification
+### Verification (Optional)
 
 Test your configuration:
 
@@ -285,7 +286,7 @@ asyncio.run(diagnose_system())
 python main.py
 ```
 
-#### Diagnostic Mode
+#### Diagnostic Mode (Optional)
 ```bash
 python -c "
 import asyncio
@@ -294,7 +295,7 @@ asyncio.run(diagnose_system())
 "
 ```
 
-#### Tool Testing
+#### Tool Testing (Optional)
 ```bash
 python -c "
 import asyncio
@@ -372,7 +373,7 @@ Add this configuration to your `claude_desktop_config.json`:
 #### Step 3: Locate Claude Desktop Config File
 On your Claude Desktop Client -> Settings -> Developer -> Edit Config -> claude_desktop_config.json
 
-<img width="990" height="652" alt="image" src="https://github.com/user-attachments/assets/59609953-b601-4f43-ac86-75d2b13894fd" />
+<img width="993" height="594" alt="image" src="https://github.com/user-attachments/assets/4bfced97-250f-4edf-a510-5ac471a556be" />
 
 
 #### Step 4: Restart Claude Desktop
