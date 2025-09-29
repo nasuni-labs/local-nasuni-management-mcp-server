@@ -16,6 +16,7 @@ Note: Nasuni Management MCP Server is Claude-specific using Anthropic's MCP fram
 - [Troubleshooting](#troubleshooting)
 - [Contributing](#contributing)
 
+
 ## Features
 
 ### Infrastructure Management
@@ -29,11 +30,17 @@ Note: Nasuni Management MCP Server is Claude-specific using Anthropic's MCP fram
 - **Usage Statistics**: Comprehensive usage reporting and analysis
 - **Notification Management**: Centralized alert and notification handling
 
+## Support Statement
+- Nasuni Support is limited to the underlying APIs used by the MCP Server.
+- Nasuni API  bugs or feature requests should be communicated to Nasuni Customer Success.
+- GitHub project to-do's, bugs, and feature requests should be submitted as “Issues” in GitHub under its repositories.
+
 ## Prerequisites
 
 ### Python Requirements
 - **Python**: Version 3.11+ or later is required
 - **Recommendation**: Install the latest stable Python version for best performance and security
+ 
 
 #### Checking Your Python Version
 ```bash
@@ -100,6 +107,7 @@ sudo pacman -S python python-pip
 - **Important**: When running locally, MCP server tools are **only accessible through the Claude Desktop Client**, not through Claude's web interface
 
 ### NMC API Requirements  
+-**NMC Version**: Recommended NMC Version 24.1.x or later 
 - **NMC Credentials**: Accessing the NMC API requires a user who is a member of an NMC group that has the "Enable NMC API Access" permission enabled
 - **API Permissions**: Along with 'Enable NMC API Access', the API users must also have the corresponding NMC permission for each action they perform. For a granular permission set, refer to the [Available Tools](https://github.com/nasuni-labs/local-nasuni-management-mcp-server/?tab=readme-ov-file#available-tools) section.
 - **Account Types**: Both native and domain accounts are supported for NMC API authentication (SSO accounts are **not supported** via the NMC API)
