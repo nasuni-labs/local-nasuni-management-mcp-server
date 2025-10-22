@@ -1,0 +1,32 @@
+name: Track GitHub Traffic
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # Daily at midnight UTC
+  workflow_dispatch:  # Allows manual trigger
+
+jobs:
+  track-traffic:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        
+      - name: Fetch Traffic Data
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p traffic-data
+          DATE=$(date +%Y-%m-%d)
+          
+          gh api repos/${{ github.repository }}/traffic/views > traffic-data/views_${DATE}.json
+          gh api repos/${{ github.repository }}/traffic/clones > traffic-data/clones_${DATE}.json
+          gh api repos/${{ github.repository }}/traffic/popular/paths > traffic-data/paths_${DATE}.json
+          gh api repos/${{ github.repository }}/traffic/popular/referrers > traffic-data/referrers_${DATE}.json
+          
+      - name: Commit and Push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add traffic-data/
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Traffic data: $(date +%Y-%m-%d)" && git push)
