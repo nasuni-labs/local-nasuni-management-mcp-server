@@ -110,36 +110,39 @@ def deduplicate_csv(filename, key_fields):
             writer.writerows(seen.values())
 
 def main():
+    # Create data directory if it doesn't exist
+    Path('data').mkdir(exist_ok=True)
+    
     print("Fetching traffic data from GitHub API...")
     traffic_data = fetch_traffic_data()
     
     # Process and append views
     print("Processing views data...")
     views_records = process_views_and_clones(traffic_data['views'], 'views')
-    append_to_csv('traffic_views.csv', views_records, 
+    append_to_csv('data/traffic_views.csv', views_records, 
                   ['date', 'timestamp', 'count', 'uniques'])
-    deduplicate_csv('traffic_views.csv', ['date'])
+    deduplicate_csv('data/traffic_views.csv', ['date'])
     
     # Process and append clones
     print("Processing clones data...")
     clones_records = process_views_and_clones(traffic_data['clones'], 'clones')
-    append_to_csv('traffic_clones.csv', clones_records,
+    append_to_csv('data/traffic_clones.csv', clones_records,
                   ['date', 'timestamp', 'count', 'uniques'])
-    deduplicate_csv('traffic_clones.csv', ['date'])
+    deduplicate_csv('data/traffic_clones.csv', ['date'])
     
     # Process and append paths
     print("Processing popular paths...")
     paths_records = process_paths(traffic_data['paths'])
-    append_to_csv('traffic_paths.csv', paths_records,
+    append_to_csv('data/traffic_paths.csv', paths_records,
                   ['date', 'path', 'title', 'count', 'uniques'])
-    deduplicate_csv('traffic_paths.csv', ['date', 'path'])
+    deduplicate_csv('data/traffic_paths.csv', ['date', 'path'])
     
     # Process and append referrers
     print("Processing referrers...")
     referrers_records = process_referrers(traffic_data['referrers'])
-    append_to_csv('traffic_referrers.csv', referrers_records,
+    append_to_csv('data/traffic_referrers.csv', referrers_records,
                   ['date', 'referrer', 'count', 'uniques'])
-    deduplicate_csv('traffic_referrers.csv', ['date', 'referrer'])
+    deduplicate_csv('data/traffic_referrers.csv', ['date', 'referrer'])
     
     # Summary
     print("\n✓ Traffic data processed successfully!")
