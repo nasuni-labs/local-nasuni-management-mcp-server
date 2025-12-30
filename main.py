@@ -35,9 +35,9 @@ async def main():
                 server.create_initialization_options()
             )
     except KeyboardInterrupt:
-        print("🛑 Server stopped by user", file=sys.stderr)
+        print("Server stopped by user", file=sys.stderr)
     except Exception as e:
-        print(f"❌ MCP server error: {e}", file=sys.stderr)
+        print(f"MCP server error: {e}", file=sys.stderr)
         import traceback
         traceback.print_exc(file=sys.stderr)
         raise
@@ -140,6 +140,49 @@ async def diagnose_system():
             print("   Cloud Credentials API: ❌ Connection failed", file=sys.stderr)
     except Exception as e:
         print(f"   Cloud Credentials API: ❌ {e}", file=sys.stderr)
+
+    if config.portal_enabled:
+        print("   Portal Integration: ✅ Enabled", file=sys.stderr)
+        print(f"   Portal URL: {config.portal_config.base_url}", file=sys.stderr)
+        print(f"   Service Key: {'✅ Present' if config.portal_config.service_key else '❌ Missing'}", file=sys.stderr)
+        print(f"   Service Secret: {'✅ Present' if config.portal_config.service_secret else '❌ Missing'}", file=sys.stderr)
+        
+        try:
+            from api.portal_auth_api import PortalAuthAPIClient
+            portal_auth_client = PortalAuthAPIClient(config.portal_config)
+            
+            # Check current token status
+            token_info = portal_auth_client.get_token_info()
+            print(f"   Access Token: {'✅ Present' if token_info['has_token'] else '❌ Missing'}", file=sys.stderr)
+            
+            if token_info['has_token']:
+                if token_info['is_expired']:
+                    print(f"   Token Status: ⚠️ Expired", file=sys.stderr)
+                else:
+                    print(f"   Token Status: ✅ Valid ({token_info.get('time_until_expiry', 'unknown')} remaining)", file=sys.stderr)
+            
+            # Test authentication
+            print("   Testing Portal authentication...", file=sys.stderr)
+            portal_success = await portal_auth_client.test_connection()
+            
+            if portal_success:
+                print("   Portal API: ✅ Connected", file=sys.stderr)
+                # Show token info after successful auth
+                new_token_info = portal_auth_client.get_token_info()
+                if not new_token_info['is_expired']:
+                    print(f"   Token expires in: {new_token_info.get('time_until_expiry', 'unknown')}", file=sys.stderr)
+            else:
+                print("   Portal API: ❌ Connection failed", file=sys.stderr)
+                print("   Check service key and secret in .env file", file=sys.stderr)
+                
+        except Exception as e:
+            print(f"   Portal API: ❌ {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
+    else:
+        print("   Portal Integration: ⚪ Disabled (optional)", file=sys.stderr)
+        print("   To enable: Add PORTAL_SERVICE_KEY and PORTAL_SERVICE_SECRET to .env", file=sys.stderr)
+
 
 
 async def test_all_tools():

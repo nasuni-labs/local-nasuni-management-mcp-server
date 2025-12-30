@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""Optimized configuration management for the MCP server."""
+"""Optimized configuration management for the MCP server with Portal support."""
 
 import os
-import sys
 from typing import Any, Optional, Dict
 from dataclasses import dataclass
 from dotenv import load_dotenv
@@ -22,22 +21,40 @@ class APIConfig:
     timeout: float = 30.0
 
 
+@dataclass
+class PortalAPIConfig:
+    """Configuration for Portal API connections."""
+    base_url: str
+    service_key: Optional[str] = None
+    service_secret: Optional[str] = None
+    access_token: Optional[str] = None
+    refresh_token: Optional[str] = None
+    verify_ssl: bool = True
+    timeout: float = 30.0
+
+
 class ConfigManager:
-    """Simplified configuration manager - one config for all services."""
+    """Configuration manager with support for both NMC and Portal APIs."""
     
     def __init__(self):
-        # Load configuration once and reuse for all services
+        # Load NMC configuration (required)
         self.api_config = self._load_api_config()
         
-        # All services use the same configuration
+        # All NMC services use the same configuration
         self.filers_config = self.api_config
         self.shares_config = self.api_config 
         self.volumes_config = self.api_config
+        
+        # Load Portal configuration (optional)
+        self.portal_config = self._load_portal_config()
+        self.portal_enabled = self._is_portal_enabled()
+        
+        # Server instructions and behavior settings
         self.server_instructions = server_instructions
         self.behavior_settings = self._load_behavior_settings()
     
     def _load_api_config(self) -> APIConfig:
-        """Load API configuration once for all services."""
+        """Load NMC API configuration once for all services."""
         base_url = os.getenv("API_BASE_URL", os.getenv("FILERS_API_URL", "https://3.18.196.153"))
         token = self._get_api_token()
         verify_ssl = os.getenv("VERIFY_SSL", "false").lower() == "true"
@@ -51,31 +68,50 @@ class ConfigManager:
         )
     
     def _get_api_token(self) -> Optional[str]:
-        """Get API token from environment or file."""
-        # Try environment variable first (includes .env file via dotenv)
-        token = os.getenv("API_TOKEN") or os.getenv("FILERS_API_TOKEN")
-        
+        """Get NMC API token from environment or file - called only once."""
+        # Try environment variable first
+        token = os.getenv("API_TOKEN", os.getenv("FILERS_API_TOKEN"))
         if token:
-            # Also check if token is expired
-            expires = os.getenv("API_TOKEN_EXPIRES") or os.getenv("FILERS_TOKEN_EXPIRES")
-            if expires:
-                try:
-                    from datetime import datetime, timedelta
-                    expires_clean = expires.replace("UTC", "+00:00")
-                    expires_time = datetime.fromisoformat(expires_clean)
-                    now = datetime.now(expires_time.tzinfo)
-                    
-                    if expires_time > now + timedelta(minutes=10):
-                        # Token is still valid
-                        return token
-                    else:
-                        print(f"Token expired, will need refresh", file=sys.stderr)
-                        return None
-                except:
-                    pass
             return token
         
-        return None
+        # Try reading from file
+        token_file = os.getenv("API_TOKEN_FILE", os.getenv("FILERS_TOKEN_FILE", "/path/to/your/token.txt"))
+        try:
+            with open(token_file, 'r') as f:
+                return f.read().strip()
+        except FileNotFoundError:
+            print(f"Token file not found: {token_file}")
+            return None
+        except Exception as e:
+            print(f"Error reading token file: {e}")
+            return None
+    
+    def _load_portal_config(self) -> PortalAPIConfig:
+        """Load Portal API configuration (optional)."""
+        base_url = os.getenv("PORTAL_API_BASE_URL", "https://am1.portal.api.nasuni.com")
+        service_key = os.getenv("PORTAL_SERVICE_KEY")
+        service_secret = os.getenv("PORTAL_SERVICE_SECRET")
+        access_token = os.getenv("PORTAL_ACCESS_TOKEN")
+        refresh_token = os.getenv("PORTAL_REFRESH_TOKEN")
+        verify_ssl = os.getenv("PORTAL_VERIFY_SSL", "true").lower() == "true"
+        timeout = float(os.getenv("PORTAL_API_TIMEOUT", "30.0"))
+        
+        return PortalAPIConfig(
+            base_url=base_url,
+            service_key=service_key,
+            service_secret=service_secret,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            verify_ssl=verify_ssl,
+            timeout=timeout
+        )
+    
+    def _is_portal_enabled(self) -> bool:
+        """Check if Portal integration is enabled (has required credentials)."""
+        return bool(
+            self.portal_config.service_key and 
+            self.portal_config.service_secret
+        )
     
     def add_api_config(self, name: str) -> APIConfig:
         """Add configuration for a new API - reuses the same config."""
@@ -84,13 +120,29 @@ class ConfigManager:
     
     def get_config_summary(self) -> Dict[str, str]:
         """Get configuration summary for debugging."""
-        return {
-            'base_url': self.api_config.base_url,
-            'token_present': bool(self.api_config.token),
-            'verify_ssl': self.api_config.verify_ssl,
-            'timeout': self.api_config.timeout,
-            'services': 'All services use same config'
+        summary = {
+            'nmc_base_url': self.api_config.base_url,
+            'nmc_token_present': bool(self.api_config.token),
+            'nmc_verify_ssl': self.api_config.verify_ssl,
+            'nmc_timeout': self.api_config.timeout,
+            'services': 'All NMC services use same config',
         }
+        
+        # Add Portal info if enabled
+        if self.portal_enabled:
+            summary.update({
+                'portal_enabled': True,
+                'portal_base_url': self.portal_config.base_url,
+                'portal_service_key_present': bool(self.portal_config.service_key),
+                'portal_service_secret_present': bool(self.portal_config.service_secret),
+                'portal_access_token_present': bool(self.portal_config.access_token),
+                'portal_verify_ssl': self.portal_config.verify_ssl,
+            })
+        else:
+            summary['portal_enabled'] = False
+            summary['portal_note'] = 'Portal credentials not configured (optional)'
+        
+        return summary
     
     def _load_behavior_settings(self) -> Dict[str, Any]:
         """Load behavioral configuration settings."""

@@ -5,6 +5,7 @@ import sys
 from typing import List, Dict, Any
 from mcp.server import Server
 from mcp.types import Tool, TextContent
+from installer import Colors
 from tools.registry import ToolRegistry
 from api.filers_api import FilersAPIClient
 from config.settings import config
@@ -27,41 +28,58 @@ class MCPServer:
         print("\n🚀 Setting up MCP Server tools...", file=sys.stderr)
         print("=" * 60, file=sys.stderr)
         
+        # Initialize client variables at method level (so they're accessible throughout)
+        filers_client = None
+        volumes_client = None
+        shares_client = None
+        
         # Setup Filers API client and tools
-        filers_client = FilersAPIClient(config.filers_config)
-        self.tool_registry.register_filer_tools(filers_client)
+        try:
+            filers_client = FilersAPIClient(config.filers_config)
+            self.tool_registry.register_filer_tools(filers_client)
+        except Exception as e:
+            print(f"⚠️ Filer tools not available: {e}", file=sys.stderr)
         
         # Setup Shares API client and tools
-        shares_client = None
         try:
             from api.shares_api import SharesAPIClient
             if hasattr(config, 'shares_config'):
                 shares_client = SharesAPIClient(config.shares_config)
             else:
-                shares_client = SharesAPIClient(config.filers_config)  # Fallback to filers config
+                shares_client = SharesAPIClient(config.filers_config)
             self.tool_registry.register_share_tools(shares_client)
         except (ImportError, AttributeError) as e:
             print(f"⚠️ Shares tools not available: {e}", file=sys.stderr)
         
         # Setup Volumes API client and tools
-        volumes_client = None
         try:
             from api.volumes_api import VolumesAPIClient
             if hasattr(config, 'volumes_config'):
                 volumes_client = VolumesAPIClient(config.volumes_config)
             else:
-                volumes_client = VolumesAPIClient(config.filers_config)  # Fallback to filers config
-            self.tool_registry.register_volume_tools(volumes_client, filers_client)
+                volumes_client = VolumesAPIClient(config.filers_config)
+            
+            # Register volume tools (requires filers_client)
+            if filers_client:
+                self.tool_registry.register_volume_tools(volumes_client, filers_client)
+            else:
+                print(f"⚠️ Volume tools require filers_client - skipping", file=sys.stderr)
         except (ImportError, AttributeError) as e:
             print(f"⚠️ Volume tools not available: {e}", file=sys.stderr)
         
         # Setup Filer Health API client and tools
-        filer_health_client = FilerHealthAPIClient(config.filers_config)
-        self.tool_registry.register_filer_health_tools(filer_health_client)
+        try:
+            filer_health_client = FilerHealthAPIClient(config.filers_config)
+            self.tool_registry.register_filer_health_tools(filer_health_client)
+        except Exception as e:
+            print(f"⚠️ Filer health tools not available: {e}", file=sys.stderr)
         
         # Setup Authentication API client and tools
-        auth_client = AuthAPIClient(config.filers_config)
-        self.tool_registry.register_auth_tools(auth_client)
+        try:
+            auth_client = AuthAPIClient(config.filers_config)
+            self.tool_registry.register_auth_tools(auth_client)
+        except Exception as e:
+            print(f"⚠️ Auth tools not available: {e}", file=sys.stderr)
         
         # Setup Cloud Credentials API client and tools
         try:
@@ -83,10 +101,8 @@ class MCPServer:
         try:
             from api.volume_filer_details_api import VolumeFilerDetailsAPIClient
             
-            # Create volume-filer details client
             volume_filer_details_client = VolumeFilerDetailsAPIClient(config.filers_config)
             
-            # Register consolidated volume-filer details tools
             if volumes_client is not None:
                 self.tool_registry.register_volume_filer_details_tools(
                     volume_filer_details_client, 
@@ -101,6 +117,87 @@ class MCPServer:
             import traceback
             traceback.print_exc(file=sys.stderr)
         
+        # ========== PORTAL INTEGRATION (OPTIONAL) ==========
+        if config.portal_enabled:
+            print("\n🌐 Setting up Portal Integration (Ops IQ)...", file=sys.stderr)
+            print("=" * 60, file=sys.stderr)
+            
+            try:
+                # Setup Portal Authentication
+                from api.portal_auth_api import PortalAuthAPIClient
+                portal_auth_client = PortalAuthAPIClient(config.portal_config)
+                self.tool_registry.register_portal_auth_tools(portal_auth_client)
+                
+                # Setup Portal Protection & Propagation Tools
+                if volumes_client is not None and filers_client is not None:
+                    try:
+                        from api.portal_data_protection_api import PortalDataProtectionAPIClient
+                        from api.portal_data_propagation_api import PortalDataPropagationAPIClient
+                        from utils.portal_nmc_integration import NMCPortalIntegration
+                        
+                        # Create Portal clients
+                        portal_protection_client = PortalDataProtectionAPIClient(
+                            config.portal_config, 
+                            portal_auth_client
+                        )
+                        print("✅ Created Portal data protection client", file=sys.stderr)
+                        
+                        portal_propagation_client = PortalDataPropagationAPIClient(
+                            config.portal_config,
+                            portal_auth_client
+                        )
+                        print("✅ Created Portal data propagation client", file=sys.stderr)
+                        
+                        # Create integration helper
+                        integration_helper = NMCPortalIntegration(
+                            volumes_client=volumes_client,
+                            filers_client=filers_client
+                        )
+                        print("✅ Created NMC-Portal integration helper", file=sys.stderr)
+                        
+                        # Register protection metrics tools
+                        self.tool_registry.register_portal_protection_metrics_tools(
+                            portal_protection_client,
+                            integration_helper
+                        )
+                        
+                        # Register propagation metrics tools
+                        self.tool_registry.register_portal_propagation_metrics_tools(
+                            portal_propagation_client,
+                            integration_helper
+                        )
+                        
+                        # Register combined metrics tools
+                        self.tool_registry.register_portal_combined_metrics_tools(
+                            portal_protection_client,
+                            portal_propagation_client,
+                            integration_helper
+                        )
+                            
+                    except ImportError as e:
+                        print(f"⚠️ Portal metrics import error: {e}", file=sys.stderr)
+                        import traceback
+                        traceback.print_exc(file=sys.stderr)
+                    except Exception as e:
+                        print(f"⚠️ Portal metrics setup error: {e}", file=sys.stderr)
+                        import traceback
+                        traceback.print_exc(file=sys.stderr)
+                else:
+                    print("⚠️ Portal metrics require volumes_client and filers_client", file=sys.stderr)
+                    print(f"   volumes_client: {'✅' if volumes_client else '❌'}", file=sys.stderr)
+                    print(f"   filers_client: {'✅' if filers_client else '❌'}", file=sys.stderr)
+                
+                print("=" * 60, file=sys.stderr)
+                print("✅ Portal integration setup complete", file=sys.stderr)
+                
+            except Exception as e:
+                print(f"⚠️ Portal integration failed: {e}", file=sys.stderr)
+                import traceback
+                traceback.print_exc(file=sys.stderr)
+        else:
+            print("\n⚪ Portal integration disabled (optional)", file=sys.stderr)
+            print("   To enable: Add PORTAL_SERVICE_KEY and PORTAL_SERVICE_SECRET to .env", file=sys.stderr)
+
         print("=" * 60, file=sys.stderr)
     
     def _register_handlers(self):

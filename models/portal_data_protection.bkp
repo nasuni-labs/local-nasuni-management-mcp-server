@@ -1,0 +1,522 @@
+#!/usr/bin/env python3
+"""Data model for Portal data protection telemetry."""
+
+from typing import Dict, Any, Optional, List
+from datetime import datetime
+from models.base import BaseModel
+
+
+class DataProtectionSnapshot(BaseModel):
+    """
+    Model for a single data protection snapshot.
+    
+    Represents a snapshot restore point with comprehensive protection metrics.
+    Each snapshot tracks when data was protected and how long files remained unprotected.
+    """
+    
+    def _parse_data(self, data: Dict[str, Any]):
+        """Parse data protection snapshot data."""
+        # Dimension attributes
+        self.appliance = data.get("appliance", "")  # Appliance creating the snapshot
+        self.volume = data.get("volume", "")  # Volume GUID
+        self.time = data.get("time", 0)  # Metadata snapshot completion time (Unix ms)
+        
+        # Protection metrics
+        self.protect_mean = data.get("protect_mean")  # Avg time files remained unprotected (seconds)
+        self.protect_max = data.get("protect_max")    # Max time any file remained unprotected (seconds)
+        
+        # Snapshot phases (Unix epoch milliseconds)
+        self.p1_start = data.get("p1_start", 0)  # Data snapshot phase start
+        self.p1_end = data.get("p1_end", 0)      # Data snapshot phase end
+        self.p2_start = data.get("p2_start", 0)  # Metadata snapshot phase start
+        self.p2_end = data.get("p2_end", 0)      # Metadata snapshot phase end (creates restore point)
+        
+        # Oldest Unprotected Data
+        self.oud = data.get("oud")  # Age in seconds of oldest modified file at snapshot time
+        
+        # File counts
+        self.file_count_ngl = data.get("file_count_ngl")  # Files without Global File Lock
+        self.file_count_gl = data.get("file_count_gl")    # Files with Global File Lock
+        self.file_count_total = data.get("file_count_total")  # Total files protected
+        
+        # Directory tracking
+        self.dir_count = data.get("dir_count", 0)  # Directory levels impacted
+        
+        # Restore point version
+        self.volume_version = data.get("volume_version", 0)  # Snapshot restore point version number
+    
+    @property
+    def timestamp(self) -> Optional[datetime]:
+        """Convert Unix timestamp (milliseconds) to datetime."""
+        if self.time:
+            try:
+                return datetime.fromtimestamp(self.time / 1000.0)
+            except:
+                return None
+        return None
+    
+    @property
+    def timestamp_str(self) -> str:
+        """Get human-readable timestamp."""
+        dt = self.timestamp
+        if dt:
+            return dt.strftime("%Y-%m-%d %H:%M:%S")
+        return "Unknown"
+    
+    @property
+    def p1_duration_seconds(self) -> Optional[float]:
+        """Duration of Phase 1 (data snapshot) in seconds."""
+        if self.p1_start and self.p1_end:
+            return (self.p1_end - self.p1_start) / 1000.0
+        return None
+    
+    @property
+    def p2_duration_seconds(self) -> Optional[float]:
+        """Duration of Phase 2 (metadata snapshot) in seconds."""
+        if self.p2_start and self.p2_end:
+            return (self.p2_end - self.p2_start) / 1000.0
+        return None
+    
+    @property
+    def total_snapshot_duration_seconds(self) -> Optional[float]:
+        """Total snapshot duration from P1 start to P2 end."""
+        if self.p1_start and self.p2_end:
+            return (self.p2_end - self.p1_start) / 1000.0
+        return None
+    
+    @property
+    def protect_mean_seconds(self) -> Optional[float]:
+        """Average time files remained unprotected before snapshot (seconds)."""
+        if self.protect_mean:
+            try:
+                return float(self.protect_mean)
+            except:
+                return None
+        return None
+    
+    @property
+    def protect_max_seconds(self) -> Optional[float]:
+        """Maximum time any file remained unprotected before snapshot (seconds)."""
+        if self.protect_max:
+            try:
+                return float(self.protect_max)
+            except:
+                return None
+        return None
+    
+    @property
+    def oud_seconds(self) -> Optional[int]:
+        """Oldest unprotected data age in seconds at snapshot time."""
+        return self.oud
+    
+    @property
+    def oud_minutes(self) -> Optional[float]:
+        """Oldest unprotected data age in minutes."""
+        if self.oud:
+            return self.oud / 60.0
+        return None
+    
+    @property
+    def oud_hours(self) -> Optional[float]:
+        """Oldest unprotected data age in hours."""
+        if self.oud:
+            return self.oud / 3600.0
+        return None
+    
+    @property
+    def has_unprotected_data(self) -> bool:
+        """Check if there is any unprotected data."""
+        return self.oud is not None and self.oud > 0
+    
+    @property
+    def is_complete(self) -> bool:
+        """Check if snapshot data is complete (not null)."""
+        return self.protect_mean is not None and self.oud is not None
+    
+    @property
+    def has_global_locks(self) -> bool:
+        """Check if any files were protected under Global File Lock."""
+        return self.file_count_gl is not None and self.file_count_gl > 0
+    
+    @property
+    def p2_end_datetime(self) -> Optional[datetime]:
+        """
+        Get the datetime when P2 (metadata) phase completed.
+        This is when the snapshot restore point (version) was created.
+        """
+        if self.p2_end:
+            try:
+                return datetime.fromtimestamp(self.p2_end / 1000.0)
+            except:
+                return None
+        return None
+    
+    @property
+    def restore_point_created_at(self) -> str:
+        """Get human-readable time when the restore point was created."""
+        dt = self.p2_end_datetime
+        if dt:
+            return dt.strftime("%Y-%m-%d %H:%M:%S")
+        return "Unknown"
+    
+    def format_duration(self, seconds: Optional[float]) -> str:
+        """Format duration in a human-readable way."""
+        if seconds is None:
+            return "N/A"
+        
+        if seconds < 60:
+            return f"{seconds:.1f}s"
+        elif seconds < 3600:
+            minutes = seconds / 60
+            return f"{minutes:.1f}m"
+        else:
+            hours = seconds / 3600
+            return f"{hours:.2f}h"
+    
+    def get_summary_dict(self) -> Dict[str, Any]:
+        """Get summary dictionary with key metrics."""
+        return {
+            "appliance": self.appliance,
+            "volume_version": self.volume_version,
+            "restore_point_created": self.restore_point_created_at,
+            "timestamp": self.timestamp_str,
+            "oud_seconds": self.oud,
+            "oud_human": self.format_duration(self.oud_seconds),
+            "protect_mean_seconds": self.protect_mean_seconds,
+            "protect_mean_human": self.format_duration(self.protect_mean_seconds),
+            "protect_max_seconds": self.protect_max_seconds,
+            "protect_max_human": self.format_duration(self.protect_max_seconds),
+            "p1_duration": self.format_duration(self.p1_duration_seconds),
+            "p2_duration": self.format_duration(self.p2_duration_seconds),
+            "total_duration": self.format_duration(self.total_snapshot_duration_seconds),
+            "file_count": self.file_count_total,
+            "file_count_gfl": self.file_count_gl,
+            "file_count_non_gfl": self.file_count_ngl,
+            "dir_count": self.dir_count,
+            "has_unprotected_data": self.has_unprotected_data,
+            "has_global_locks": self.has_global_locks,
+            "is_complete": self.is_complete
+        }
+
+
+class DataProtectionAnalysis:
+    """Analysis wrapper for data protection snapshots."""
+    
+    def __init__(self, snapshots: List[DataProtectionSnapshot]):
+        self.snapshots = snapshots
+        self.complete_snapshots = [s for s in snapshots if s.is_complete]
+    
+    @property
+    def latest_snapshot(self) -> Optional[DataProtectionSnapshot]:
+        """
+        Get the most recent snapshot based on highest volume_version.
+        The snapshot with the highest volume_version is the latest restore point.
+        """
+        if self.complete_snapshots:
+            return max(self.complete_snapshots, key=lambda s: s.volume_version or 0)
+        return None
+    
+    @property
+    def latest_volume_version(self) -> Optional[int]:
+        """Get the latest volume version (restore point number)."""
+        if self.latest_snapshot:
+            return self.latest_snapshot.volume_version
+        return None
+    
+    def get_statistics(self) -> Dict[str, Any]:
+        """Calculate comprehensive statistics across all snapshots."""
+        if not self.complete_snapshots:
+            return {
+                "total_snapshots": len(self.snapshots),
+                "complete_snapshots": 0,
+                "error": "No complete snapshots available for analysis"
+            }
+        
+        # Find latest snapshot (highest volume_version)
+        latest = max(self.complete_snapshots, key=lambda s: s.volume_version or 0)
+        
+        # Group by appliance
+        by_appliance = {}
+        for snap in self.complete_snapshots:
+            if snap.appliance not in by_appliance:
+                by_appliance[snap.appliance] = []
+            by_appliance[snap.appliance].append(snap)
+        
+        # Collect all metrics for analysis
+        all_oud = [s.oud_seconds for s in self.complete_snapshots if s.oud_seconds is not None]
+        all_protect_mean = [s.protect_mean_seconds for s in self.complete_snapshots if s.protect_mean_seconds is not None]
+        all_protect_max = [s.protect_max_seconds for s in self.complete_snapshots if s.protect_max_seconds is not None]
+        all_p1_durations = [s.p1_duration_seconds for s in self.complete_snapshots if s.p1_duration_seconds is not None]
+        all_p2_durations = [s.p2_duration_seconds for s in self.complete_snapshots if s.p2_duration_seconds is not None]
+        all_total_durations = [s.total_snapshot_duration_seconds for s in self.complete_snapshots if s.total_snapshot_duration_seconds is not None]
+        all_file_counts = [s.file_count_total for s in self.complete_snapshots if s.file_count_total is not None]
+        all_dir_counts = [s.dir_count for s in self.complete_snapshots if s.dir_count]
+        
+        stats = {
+            "total_snapshots": len(self.snapshots),
+            "complete_snapshots": len(self.complete_snapshots),
+            "appliances": list(by_appliance.keys()),
+            "latest_volume_version": latest.volume_version,
+            "latest_snapshot_appliance": latest.appliance,
+            "latest_snapshot_time": latest.timestamp_str,
+            "time_range": {
+                "start": self.complete_snapshots[0].timestamp_str if self.complete_snapshots else "N/A",
+                "end": self.complete_snapshots[-1].timestamp_str if self.complete_snapshots else "N/A"
+            }
+        }
+        
+        # 1. LATEST SNAPSHOT DETAILS
+        stats["latest_snapshot"] = {
+            "volume_version": latest.volume_version,
+            "appliance": latest.appliance,
+            "timestamp": latest.timestamp_str,
+            "restore_point_created": latest.restore_point_created_at,
+            "oud": self._format_duration(latest.oud_seconds),
+            "files_protected": latest.file_count_total,
+            "directories": latest.dir_count
+        }
+        
+        # 2. SNAPSHOT PHASE TIMING STATISTICS
+        if all_p1_durations:
+            longest_p1 = max(all_p1_durations)
+            longest_p1_snap = max(self.complete_snapshots, key=lambda s: s.p1_duration_seconds or 0)
+            
+            stats["p1_data_phase"] = {
+                "avg_seconds": sum(all_p1_durations) / len(all_p1_durations),
+                "avg_human": self._format_duration(sum(all_p1_durations) / len(all_p1_durations)),
+                "min_seconds": min(all_p1_durations),
+                "min_human": self._format_duration(min(all_p1_durations)),
+                "max_seconds": longest_p1,
+                "max_human": self._format_duration(longest_p1),
+                "longest_on_appliance": longest_p1_snap.appliance,
+                "longest_file_count": longest_p1_snap.file_count_total
+            }
+        
+        if all_p2_durations:
+            longest_p2 = max(all_p2_durations)
+            longest_p2_snap = max(self.complete_snapshots, key=lambda s: s.p2_duration_seconds or 0)
+            
+            stats["p2_metadata_phase"] = {
+                "avg_seconds": sum(all_p2_durations) / len(all_p2_durations),
+                "avg_human": self._format_duration(sum(all_p2_durations) / len(all_p2_durations)),
+                "min_seconds": min(all_p2_durations),
+                "min_human": self._format_duration(min(all_p2_durations)),
+                "max_seconds": longest_p2,
+                "max_human": self._format_duration(longest_p2),
+                "longest_on_appliance": longest_p2_snap.appliance,
+                "longest_dir_count": longest_p2_snap.dir_count
+            }
+        
+        if all_total_durations:
+            longest_total = max(all_total_durations)
+            longest_total_snap = max(self.complete_snapshots, key=lambda s: s.total_snapshot_duration_seconds or 0)
+            
+            stats["total_snapshot_time"] = {
+                "avg_seconds": sum(all_total_durations) / len(all_total_durations),
+                "avg_human": self._format_duration(sum(all_total_durations) / len(all_total_durations)),
+                "max_seconds": longest_total,
+                "max_human": self._format_duration(longest_total),
+                "longest_on_appliance": longest_total_snap.appliance
+            }
+        
+        # 3. OUD STATISTICS
+        if all_oud:
+            stats["oud_statistics"] = {
+                "min_seconds": min(all_oud),
+                "max_seconds": max(all_oud),
+                "avg_seconds": sum(all_oud) / len(all_oud),
+                "min_human": self._format_duration(min(all_oud)),
+                "max_human": self._format_duration(max(all_oud)),
+                "avg_human": self._format_duration(sum(all_oud) / len(all_oud))
+            }
+        
+        # 4. AVERAGE DATA PROTECTION TIME (protect_mean across all snapshots) - KEY METRIC
+        if all_protect_mean:
+            overall_avg_protection_time = sum(all_protect_mean) / len(all_protect_mean)
+            
+            stats["average_data_protection_time"] = {
+                "seconds": overall_avg_protection_time,
+                "human": self._format_duration(overall_avg_protection_time),
+                "description": "Average time files remain unprotected before being included in snapshots"
+            }
+            
+            stats["protection_time_statistics"] = {
+                "mean_avg_seconds": overall_avg_protection_time,
+                "mean_avg_human": self._format_duration(overall_avg_protection_time),
+                "mean_min_seconds": min(all_protect_mean),
+                "mean_min_human": self._format_duration(min(all_protect_mean)),
+                "mean_max_seconds": max(all_protect_mean),
+                "mean_max_human": self._format_duration(max(all_protect_mean))
+            }
+        
+        # 5. ANOMALY DETECTION (protect_max across all snapshots)
+        if all_protect_max:
+            # Find worst cases - which appliances had oldest unprotected data
+            snapshots_with_high_protect_max = sorted(
+                [(s, s.protect_max_seconds) for s in self.complete_snapshots if s.protect_max_seconds],
+                key=lambda x: x[1],
+                reverse=True
+            )[:3]  # Top 3 worst cases
+            
+            stats["protection_anomalies"] = {
+                "max_of_max_seconds": max(all_protect_max),
+                "max_of_max_human": self._format_duration(max(all_protect_max)),
+                "worst_cases": [
+                    {
+                        "appliance": snap.appliance,
+                        "timestamp": snap.timestamp_str,
+                        "protect_max": self._format_duration(duration),
+                        "volume_version": snap.volume_version
+                    }
+                    for snap, duration in snapshots_with_high_protect_max
+                ]
+            }
+        
+        # 6. FILE AND DIRECTORY STATISTICS
+        if all_file_counts:
+            total_files = sum(all_file_counts)
+            stats["file_statistics"] = {
+                "total_files_protected": total_files,
+                "avg_files_per_snapshot": sum(all_file_counts) / len(all_file_counts),
+                "max_files_in_snapshot": max(all_file_counts),
+                "min_files_in_snapshot": min(all_file_counts)
+            }
+        
+        if all_dir_counts:
+            stats["directory_statistics"] = {
+                "avg_dirs_per_snapshot": sum(all_dir_counts) / len(all_dir_counts),
+                "max_dirs_in_snapshot": max(all_dir_counts)
+            }
+        
+        # 7. MOST ACTIVE APPLIANCE (by snapshot count)
+        snapshot_counts_by_appliance = {app: len(snaps) for app, snaps in by_appliance.items()}
+        most_active = max(snapshot_counts_by_appliance.items(), key=lambda x: x[1])
+        stats["most_active_appliance"] = {
+            "name": most_active[0],
+            "snapshot_count": most_active[1],
+            "percentage": (most_active[1] / len(self.complete_snapshots)) * 100
+        }
+        
+        # 8. Per-appliance detailed statistics
+        stats["by_appliance"] = {}
+        for appliance, snaps in by_appliance.items():
+            appliance_oud = [s.oud_seconds for s in snaps if s.oud_seconds is not None]
+            appliance_protect_mean = [s.protect_mean_seconds for s in snaps if s.protect_mean_seconds is not None]
+            appliance_protect_max = [s.protect_max_seconds for s in snaps if s.protect_max_seconds is not None]
+            appliance_files = [s.file_count_total for s in snaps if s.file_count_total is not None]
+            
+            # Get latest version for this appliance
+            latest_for_appliance = max(snaps, key=lambda s: s.volume_version if s.volume_version else 0)
+            
+            stats["by_appliance"][appliance] = {
+                "snapshot_count": len(snaps),
+                "latest_version": latest_for_appliance.volume_version,
+                "latest_snapshot_time": latest_for_appliance.timestamp_str,
+                "avg_oud_seconds": sum(appliance_oud) / len(appliance_oud) if appliance_oud else None,
+                "avg_oud_human": self._format_duration(sum(appliance_oud) / len(appliance_oud)) if appliance_oud else "N/A",
+                "avg_protect_mean_seconds": sum(appliance_protect_mean) / len(appliance_protect_mean) if appliance_protect_mean else None,
+                "avg_protect_mean_human": self._format_duration(sum(appliance_protect_mean) / len(appliance_protect_mean)) if appliance_protect_mean else "N/A",
+                "max_protect_max_seconds": max(appliance_protect_max) if appliance_protect_max else None,
+                "max_protect_max_human": self._format_duration(max(appliance_protect_max)) if appliance_protect_max else "N/A",
+                "total_files_protected": sum(appliance_files) if appliance_files else 0,
+                "avg_files_per_snapshot": sum(appliance_files) / len(appliance_files) if appliance_files else 0
+            }
+        
+        return stats
+    
+    def get_insights(self) -> List[str]:
+        """Generate actionable insights from the data."""
+        insights = []
+        
+        if not self.complete_snapshots:
+            insights.append("⚠️ No complete snapshot data available for analysis")
+            return insights
+        
+        stats = self.get_statistics()
+        
+        # Insight 0: Latest snapshot info
+        if stats.get("latest_snapshot"):
+            latest = stats["latest_snapshot"]
+            insights.append(f"📌 Latest snapshot version {latest['volume_version']} created by {latest['appliance']} at {latest['timestamp']}")
+        
+        # Insight 1: Average data protection time (KEY METRIC)
+        if stats.get("average_data_protection_time"):
+            avg_prot = stats["average_data_protection_time"]
+            if avg_prot["seconds"] > 300:  # Over 5 minutes
+                insights.append(f"🚨 CONCERN: Files remain unprotected for an average of {avg_prot['human']} before snapshot protection")
+            elif avg_prot["seconds"] > 120:  # Over 2 minutes
+                insights.append(f"⚠️ Files remain unprotected for an average of {avg_prot['human']} - consider more frequent snapshots")
+            else:
+                insights.append(f"✅ Good: Files are protected quickly (avg {avg_prot['human']})")
+        
+        # Insight 2: Protection anomalies (protect_max analysis)
+        if stats.get("protection_anomalies") and stats["protection_anomalies"]["worst_cases"]:
+            worst = stats["protection_anomalies"]["worst_cases"][0]
+            max_unprotected = stats["protection_anomalies"]["max_of_max_human"]
+            
+            insights.append(f"⚠️ ANOMALY: Appliance '{worst['appliance']}' had files unprotected for up to {worst['protect_max']} (version {worst['volume_version']})")
+        
+        # Insight 3: Snapshot performance
+        if stats.get("p1_data_phase"):
+            p1 = stats["p1_data_phase"]
+            if p1["max_seconds"] > 60:  # Over 1 minute for data phase
+                insights.append(f"⏱️ Longest data phase: {p1['max_human']} on {p1['longest_on_appliance']} ({p1['longest_file_count']} files)")
+        
+        if stats.get("p2_metadata_phase"):
+            p2 = stats["p2_metadata_phase"]
+            if p2["max_seconds"] > 30:  # Over 30 seconds for metadata
+                insights.append(f"⏱️ Longest metadata phase: {p2['max_human']} on {p2['longest_on_appliance']}")
+        
+        # Insight 4: Most active appliance
+        if stats.get("most_active_appliance"):
+            active = stats["most_active_appliance"]
+            if active["percentage"] > 60:  # One appliance doing >60% of snapshots
+                insights.append(f"📊 Appliance '{active['name']}' is most active ({active['snapshot_count']} snapshots, {active['percentage']:.1f}% of total)")
+        
+        # Insight 5: Per-appliance comparison
+        if len(stats.get("by_appliance", {})) > 1:
+            appliances = stats["by_appliance"]
+            
+            # Compare average protection times
+            protect_times = {k: v.get("avg_protect_mean_seconds", 0) for k, v in appliances.items() if v.get("avg_protect_mean_seconds")}
+            if protect_times:
+                slowest = max(protect_times.items(), key=lambda x: x[1])
+                fastest = min(protect_times.items(), key=lambda x: x[1])
+                
+                if slowest[1] > fastest[1] * 1.5:  # 50% slower
+                    insights.append(f"🔍 Appliance '{slowest[0]}' takes {self._format_duration(slowest[1])} avg to protect data vs '{fastest[0]}' at {self._format_duration(fastest[1])}")
+            
+            # Compare snapshot activity
+            snapshot_counts = {k: v["snapshot_count"] for k, v in appliances.items()}
+            if max(snapshot_counts.values()) > min(snapshot_counts.values()) * 2:  # 2x difference
+                insights.append(f"⚖️ Uneven snapshot distribution across appliances - some may be overloaded")
+        
+        # Insight 6: File volume analysis
+        if stats.get("file_statistics"):
+            files = stats["file_statistics"]
+            if files["max_files_in_snapshot"] > files["avg_files_per_snapshot"] * 3:
+                insights.append(f"📁 Large variance in snapshot size (avg {files['avg_files_per_snapshot']:.0f} files, max {files['max_files_in_snapshot']})")
+        
+        # Insight 7: Snapshot frequency
+        if len(self.complete_snapshots) > 1:
+            time_span_hours = (self.complete_snapshots[-1].time - self.complete_snapshots[0].time) / (1000 * 3600)
+            snapshot_frequency = time_span_hours / len(self.complete_snapshots) if len(self.complete_snapshots) > 0 else 0
+            
+            if snapshot_frequency > 0:
+                insights.append(f"⏰ Snapshot frequency: approximately every {snapshot_frequency:.1f} hours")
+        
+        return insights
+    
+    def _format_duration(self, seconds: Optional[float]) -> str:
+        """Format duration in a human-readable way."""
+        if seconds is None:
+            return "N/A"
+        
+        if seconds < 60:
+            return f"{seconds:.1f}s"
+        elif seconds < 3600:
+            minutes = seconds / 60
+            return f"{minutes:.1f}m"
+        else:
+            hours = seconds / 3600
+            return f"{hours:.2f}h"

@@ -170,6 +170,69 @@ class ToolRegistry:
             import traceback
             traceback.print_exc(file=sys.stderr)
     
+    
+    def register_portal_auth_tools(self, auth_client):
+        """Register Portal authentication tools."""
+        from tools.portal_auth_tools import (
+            PortalAuthenticateTool,
+            PortalCheckTokenTool,
+            PortalEnsureValidTokenTool
+        )
+        
+        self.register_tool(PortalAuthenticateTool(auth_client))
+        self.register_tool(PortalCheckTokenTool(auth_client))
+        self.register_tool(PortalEnsureValidTokenTool(auth_client))
+        
+        print("✅ Registered 3 Portal authentication tools", file=sys.stderr)
+    
+    def register_portal_protection_metrics_tools(self, portal_client, integration_helper):
+        from tools.portal_protection_tools import (
+            GetVolumeProtectionMetricsTool,
+            CompareVolumeProtectionMetricsTool  # Make sure this matches
+        )
+        
+        self.register_tool(GetVolumeProtectionMetricsTool(portal_client, integration_helper))
+        self.register_tool(CompareVolumeProtectionMetricsTool(portal_client, integration_helper))
+        
+        print("✅ Registered 2 Portal protection metrics tools (TELEMETRY)", file=sys.stderr)
+    
+    
+    def register_portal_propagation_metrics_tools(self, propagation_client, integration_helper):
+        """Register Portal data propagation (sync timing) tools."""
+        from tools.portal_propagation_tools import (
+            GetVolumePropagationMetricsTool
+        )
+        
+        self.register_tool(GetVolumePropagationMetricsTool(propagation_client, integration_helper))
+        
+        print("✅ Registered 1 Portal propagation metrics tool", file=sys.stderr)
+    
+    def register_portal_combined_metrics_tools(self, protection_client, propagation_client, integration_helper):
+        """Register Portal combined (end-to-end) and sync status tools."""
+        from tools.portal_protection_tools import (
+            GetEndToEndProtectionTimingTool
+        )
+        from tools.portal_appliance_sync_status_tools import (
+            GetVolumeLatestVersionTool,
+            CheckApplianceSyncStatusTool,
+            GetAllAppliancesSyncStatusTool
+        )
+        
+        # End-to-end timing
+        self.register_tool(GetEndToEndProtectionTimingTool(
+            protection_client,
+            propagation_client,
+            integration_helper
+        ))
+        
+        # Sync status monitoring
+        self.register_tool(GetVolumeLatestVersionTool(protection_client, integration_helper))
+        self.register_tool(CheckApplianceSyncStatusTool(protection_client, propagation_client, integration_helper))
+        self.register_tool(GetAllAppliancesSyncStatusTool(protection_client, propagation_client, integration_helper))
+        
+        print("✅ Registered 4 Portal combined & sync status tools", file=sys.stderr)
+
+
     def get_tool_list(self) -> List[Tool]:
         """Get list of all registered tools for MCP."""
         tools = []
@@ -215,24 +278,38 @@ class ToolRegistry:
             'auth': [],
             'credential': [],
             'notification': [],
-            'volume_filer': []
+            'volume_filer': [],
+            'telemetry': []
         }
         
         for name in self.tools.keys():
-            if 'filer_health' in name or 'health' in name:
+            
+            if ('protection_metrics' in name or 
+            'propagation_metrics' in name or
+            'end_to_end' in name):
+                tool_categories['telemetry'].append(name)
+            # Health monitoring
+            elif 'filer_health' in name or 'health' in name:
                 tool_categories['health'].append(name)
+            # Volume-filer operations
             elif 'volume_filer' in name or 'volume_operations' in name:
                 tool_categories['volume_filer'].append(name)
+            # Filer management
             elif 'filer' in name:
                 tool_categories['filer'].append(name)
+            # Volume management
             elif 'volume' in name:
                 tool_categories['volume'].append(name)
+            # Share management
             elif 'share' in name:
                 tool_categories['share'].append(name)
+            # Authentication
             elif 'auth' in name or 'token' in name:
                 tool_categories['auth'].append(name)
+            # Credentials
             elif 'credential' in name:
                 tool_categories['credential'].append(name)
+            # Notifications
             elif 'notification' in name:
                 tool_categories['notification'].append(name)
         
@@ -247,3 +324,5 @@ class ToolRegistry:
                 if tools
             }
         }
+
+
