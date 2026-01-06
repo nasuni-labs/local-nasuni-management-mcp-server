@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from statistics import StatisticsError, mean
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from mcp.types import TextContent
 
@@ -34,6 +34,104 @@ _TIME_FIELDS = {
     "completed_at",
     "created_at",
 }
+
+# ============================================================================
+# COMMON SCHEMA PROPERTIES (DRY)
+# ============================================================================
+
+VOLUME_PROPERTY = {
+    "type": "string",
+    "description": "Volume name or GUID",
+}
+
+PERIOD_PROPERTY_3H = {
+    "type": "string",
+    "description": "Time period for analysis (default: PT3H)",
+    "default": "PT3H",
+}
+
+PERIOD_PROPERTY_6H = {
+    "type": "string",
+    "description": "Time period to analyze (default: PT6H)",
+    "default": "PT6H",
+}
+
+APPLIANCE_PROPERTY = {
+    "type": "string",
+    "description": "Appliance name (description) or serial number",
+}
+
+
+# ============================================================================
+# BASE CLASS FOR VOLUME TELEMETRY TOOLS (DRY)
+# ============================================================================
+
+
+class VolumeResolutionError(Exception):
+    """Raised when volume resolution fails."""
+    pass
+
+
+class BaseVolumeTelemetryTool(BaseTool):
+    """Base class for volume telemetry tools with common patterns.
+    
+    Provides:
+    - Volume resolution with error handling
+    - Serial number lookup
+    - Automatic error handling in execute()
+    
+    Subclasses only need to implement _do_execute() - no need to override execute().
+    """
+
+    def __init__(
+        self,
+        name: str,
+        description: str,
+        integration_helper: NMCPortalIntegration,
+        protection_client: PortalVolumeTelemetryAPIClient = None,
+        propagation_client: PortalVolumeTelemetryAPIClient = None,
+    ):
+        super().__init__(name=name, description=description)
+        self.integration = integration_helper
+        self.protection_client = protection_client
+        self.propagation_client = propagation_client
+
+    async def _resolve_volume(
+        self, volume_id: str
+    ) -> Tuple[str, List[str]]:
+        """Resolve volume identifier and get filer serials.
+        
+        Returns:
+            Tuple of (volume_guid, serial_numbers)
+            
+        Raises:
+            VolumeResolutionError: If volume not found or no filers
+        """
+        volume_guid, _ = await self.integration.resolve_volume_identifier(volume_id)
+        if not volume_guid:
+            raise VolumeResolutionError(f"Volume not found: {volume_id}")
+
+        serials = await self.integration.get_filer_serials_for_volume(volume_guid)
+        if not serials:
+            raise VolumeResolutionError(f"No filers found for volume: {volume_id}")
+
+        return volume_guid, serials
+
+    async def execute(self, arguments: Dict[str, Any]) -> List[TextContent]:
+        """Execute with automatic error handling. Subclasses implement _do_execute()."""
+        try:
+            return await self._do_execute(arguments)
+        except VolumeResolutionError as e:
+            return self.format_error(str(e))
+        except Exception as e:  # pragma: no cover - defensive
+            logger.error(f"{self.name} error: {e}")
+            import traceback
+            traceback.print_exc()
+            return self.format_error(str(e))
+
+    async def _do_execute(self, arguments: Dict[str, Any]) -> List[TextContent]:
+        """Implement actual tool logic in subclasses."""
+        raise NotImplementedError("Subclasses must implement _do_execute")
 
 
 class PortalApplianceTelemetryTool(BaseTool):
@@ -393,7 +491,7 @@ class PortalVolumeTelemetryTool(BaseTool):
         return "\n".join(section for section in sections if section)
 
 
-class GetVolumeProtectionMetricsTool(BaseTool):
+class GetVolumeProtectionMetricsTool(BaseVolumeTelemetryTool):
     """Primary tool for volume data protection metrics from Portal Ops IQ."""
 
     def __init__(
@@ -410,23 +508,18 @@ class GetVolumeProtectionMetricsTool(BaseTool):
                 "(6) Snapshot phase timing (data & metadata duration), (7) Files and directories protected per snapshot, (8) Most active appliance, (9) Protection performance by appliance. "
                 "Accepts volume name or GUID."
             ),
+            integration_helper=integration_helper,
+            protection_client=api_client,
         )
-        self.api_client = api_client
-        self.integration = integration_helper
 
     def get_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "volume": {
-                    "type": "string",
-                    "description": "Volume name or GUID",
-                },
+                "volume": VOLUME_PROPERTY,
                 "period": {
-                    "type": "string",
-                    "description": (
-                        "Time period (ISO 8601). Examples: PT1H, PT3H (default), PT6H, PT24H, P7D"
-                    ),
+                    **PERIOD_PROPERTY_3H,
+                    "description": "Time period (ISO 8601). Examples: PT1H, PT3H (default), PT6H, PT24H, P7D",
                 },
                 "smart_sampling": {
                     "type": "boolean",
@@ -440,52 +533,37 @@ class GetVolumeProtectionMetricsTool(BaseTool):
             "required": ["volume"],
         }
 
-    async def execute(self, arguments: Dict[str, Any]) -> List[TextContent]:
-        try:
-            volume_id = arguments.get("volume", "").strip()
-            if not volume_id:
-                return self.format_error("Volume name or GUID required")
+    async def _do_execute(self, arguments: Dict[str, Any]) -> List[TextContent]:
+        volume_id = arguments.get("volume", "").strip()
+        if not volume_id:
+            return self.format_error("Volume name or GUID required")
 
-            period = arguments.get("period", "PT3H")
-            smart_sampling = arguments.get("smart_sampling", True)
-            show_details = arguments.get("show_details", False)
+        period = arguments.get("period", "PT3H")
+        smart_sampling = arguments.get("smart_sampling", True)
+        show_details = arguments.get("show_details", False)
 
-            volume_guid, _ = await self.integration.resolve_volume_identifier(volume_id)
-            if not volume_guid:
-                return self.format_error(f"Volume not found: {volume_id}")
+        volume_guid, serials = await self._resolve_volume(volume_id)
+        logger.info(f"Using {len(serials)} filer(s): {serials}")
 
-            serials = await self.integration.get_filer_serials_for_volume(volume_guid)
-            if not serials:
-                return self.format_error(f"No filers found for volume: {volume_id}")
+        analysis = await self.protection_client.get_volume_data_protection_analysis(
+            volume_guid=volume_guid,
+            serial_numbers=serials,
+            period=period,
+            smart_sampling=smart_sampling,
+        )
 
-            logger.info(f"Using {len(serials)} filer(s): {serials}")
+        if not analysis.complete_snapshots:
+            return [
+                TextContent(
+                    type="text",
+                    text=f"No protection data for {volume_id} in period {period}",
+                )
+            ]
 
-            analysis = await self.api_client.get_volume_data_protection_analysis(
-                volume_guid=volume_guid,
-                serial_numbers=serials,
-                period=period,
-                smart_sampling=smart_sampling,
-            )
-
-            if not analysis.complete_snapshots:
-                return [
-                    TextContent(
-                        type="text",
-                        text=f"No protection data for {volume_id} in period {period}",
-                    )
-                ]
-
-            output = self._format_output(
-                volume_id, volume_guid, period, serials, analysis, show_details
-            )
-            return [TextContent(type="text", text=output)]
-
-        except Exception as e:  # pragma: no cover - defensive
-            logger.error(f"Protection metrics tool error: {e}")
-            import traceback
-
-            traceback.print_exc()
-            return self.format_error(str(e))
+        output = self._format_output(
+            volume_id, volume_guid, period, serials, analysis, show_details
+        )
+        return [TextContent(type="text", text=output)]
 
     def _format_output(
         self,
@@ -611,7 +689,7 @@ class GetVolumeProtectionMetricsTool(BaseTool):
         return out
 
 
-class CompareVolumeProtectionMetricsTool(BaseTool):
+class CompareVolumeProtectionMetricsTool(BaseVolumeTelemetryTool):
     """Tool to compare protection metrics across multiple volumes."""
 
     def __init__(
@@ -625,9 +703,9 @@ class CompareVolumeProtectionMetricsTool(BaseTool):
                 "[TELEMETRY] Compare data protection metrics across multiple volumes using Portal Ops IQ. "
                 "Shows which volumes have better/worse protection times and identifies performance outliers."
             ),
+            integration_helper=integration_helper,
+            protection_client=api_client,
         )
-        self.api_client = api_client
-        self.integration = integration_helper
 
     def get_schema(self) -> Dict[str, Any]:
         return {
@@ -638,64 +716,48 @@ class CompareVolumeProtectionMetricsTool(BaseTool):
                     "items": {"type": "string"},
                     "description": "List of volume names or GUIDs to compare (minimum 2)",
                 },
-                "period": {
-                    "type": "string",
-                    "description": "Time period for analysis (default: PT3H)",
-                    "default": "PT3H",
-                },
+                "period": PERIOD_PROPERTY_3H,
             },
             "required": ["volumes"],
         }
 
-    async def execute(self, arguments: Dict[str, Any]) -> List[TextContent]:
-        try:
-            volumes = arguments.get("volumes", [])
-            if not volumes or len(volumes) < 2:
-                return self.format_error("At least 2 volumes required for comparison")
+    async def _do_execute(self, arguments: Dict[str, Any]) -> List[TextContent]:
+        volumes = arguments.get("volumes", [])
+        if not volumes or len(volumes) < 2:
+            return self.format_error("At least 2 volumes required for comparison")
 
-            period = arguments.get("period", "PT3H")
-            volume_data = []
+        period = arguments.get("period", "PT3H")
+        volume_data = []
 
-            for vol_id in volumes:
-                logger.info(f"Analyzing volume: {vol_id}")
-                volume_guid, _ = await self.integration.resolve_volume_identifier(vol_id)
-                if not volume_guid:
-                    logger.warning(f"Volume not found: {vol_id}, skipping")
-                    continue
+        for vol_id in volumes:
+            logger.info(f"Analyzing volume: {vol_id}")
+            try:
+                volume_guid, serials = await self._resolve_volume(vol_id)
+            except VolumeResolutionError as e:
+                logger.warning(f"{e}, skipping")
+                continue
 
-                serials = await self.integration.get_filer_serials_for_volume(volume_guid)
-                if not serials:
-                    logger.warning(f"No filers found for volume: {vol_id}, skipping")
-                    continue
+            analysis = await self.protection_client.get_volume_data_protection_analysis(
+                volume_guid=volume_guid,
+                serial_numbers=serials,
+                period=period,
+            )
 
-                analysis = await self.api_client.get_volume_data_protection_analysis(
-                    volume_guid=volume_guid,
-                    serial_numbers=serials,
-                    period=period,
+            if analysis.complete_snapshots:
+                volume_data.append(
+                    {
+                        "identifier": vol_id,
+                        "guid": volume_guid,
+                        "analysis": analysis,
+                        "stats": analysis.get_statistics(),
+                    }
                 )
 
-                if analysis.complete_snapshots:
-                    volume_data.append(
-                        {
-                            "identifier": vol_id,
-                            "guid": volume_guid,
-                            "analysis": analysis,
-                            "stats": analysis.get_statistics(),
-                        }
-                    )
+        if not volume_data:
+            return self.format_error("No valid data found for any volumes")
 
-            if not volume_data:
-                return self.format_error("No valid data found for any volumes")
-
-            output = self._format_comparison(volume_data, period)
-            return [TextContent(type="text", text=output)]
-
-        except Exception as e:  # pragma: no cover - defensive
-            logger.error(f"Protection comparison error: {e}")
-            import traceback
-
-            traceback.print_exc()
-            return self.format_error(str(e))
+        output = self._format_comparison(volume_data, period)
+        return [TextContent(type="text", text=output)]
 
     def _format_comparison(self, volume_data: List[Dict], period: str) -> str:
         out = (
@@ -744,7 +806,7 @@ class CompareVolumeProtectionMetricsTool(BaseTool):
         return out
 
 
-class GetEndToEndProtectionTimingTool(BaseTool):
+class GetEndToEndProtectionTimingTool(BaseVolumeTelemetryTool):
     """Tool for complete protection + propagation cycle timing."""
 
     def __init__(self, protection_client, propagation_client, integration_helper):
@@ -754,55 +816,38 @@ class GetEndToEndProtectionTimingTool(BaseTool):
                 "[TELEMETRY - COMPLETE CYCLE] Get complete protection cycle: data change → snapshot → sync to all appliances. "
                 "Combines protection and propagation to show total time for data to be protected AND available everywhere."
             ),
+            integration_helper=integration_helper,
+            protection_client=protection_client,
+            propagation_client=propagation_client,
         )
-        self.protection_client = protection_client
-        self.propagation_client = propagation_client
-        self.integration = integration_helper
 
     def get_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "volume": {"type": "string", "description": "Volume name or GUID"},
-                "period": {
-                    "type": "string",
-                    "description": "Time period (default: PT3H)",
-                },
+                "volume": VOLUME_PROPERTY,
+                "period": PERIOD_PROPERTY_3H,
             },
             "required": ["volume"],
         }
 
-    async def execute(self, arguments: Dict[str, Any]) -> List[TextContent]:
-        try:
-            volume_id = arguments.get("volume", "").strip()
-            if not volume_id:
-                return self.format_error("Volume required")
+    async def _do_execute(self, arguments: Dict[str, Any]) -> List[TextContent]:
+        volume_id = arguments.get("volume", "").strip()
+        if not volume_id:
+            return self.format_error("Volume required")
 
-            period = arguments.get("period", "PT3H")
-            volume_guid, _ = await self.integration.resolve_volume_identifier(volume_id)
-            if not volume_guid:
-                return self.format_error(f"Volume not found: {volume_id}")
+        period = arguments.get("period", "PT3H")
+        volume_guid, serials = await self._resolve_volume(volume_id)
 
-            serials = await self.integration.get_filer_serials_for_volume(volume_guid)
-            if not serials:
-                return self.format_error(f"No filers found: {volume_id}")
+        protection = await self.protection_client.get_volume_data_protection_analysis(
+            volume_guid, serials, period
+        )
+        propagation = await self.propagation_client.get_volume_data_propagation_analysis(
+            volume_guid, serials, period
+        )
 
-            protection = await self.protection_client.get_volume_data_protection_analysis(
-                volume_guid, serials, period
-            )
-            propagation = await self.propagation_client.get_volume_data_propagation_analysis(
-                volume_guid, serials, period
-            )
-
-            output = self._format_combined(volume_id, period, protection, propagation)
-            return [TextContent(type="text", text=output)]
-
-        except Exception as e:  # pragma: no cover - defensive
-            logger.error(f"End-to-end timing error: {e}")
-            import traceback
-
-            traceback.print_exc()
-            return self.format_error(str(e))
+        output = self._format_combined(volume_id, period, protection, propagation)
+        return [TextContent(type="text", text=output)]
 
     def _format_combined(self, volume_id, period, protection, propagation) -> str:
         prot_stats = protection.get_statistics()
@@ -831,7 +876,7 @@ class GetEndToEndProtectionTimingTool(BaseTool):
         return out
 
 
-class GetVolumePropagationMetricsTool(BaseTool):
+class GetVolumePropagationMetricsTool(BaseVolumeTelemetryTool):
     """Tool for data propagation (sync timing) metrics."""
 
     def __init__(
@@ -845,22 +890,16 @@ class GetVolumePropagationMetricsTool(BaseTool):
                 "[TELEMETRY - DATA PROPAGATION] Get sync timing metrics from Portal Ops IQ. "
                 "Shows how long it takes for snapshots to propagate to connected appliances."
             ),
+            integration_helper=integration_helper,
+            propagation_client=api_client,
         )
-        self.api_client = api_client
-        self.integration = integration_helper
 
     def get_schema(self) -> Dict[str, Any]:
         return {
             "type": "object",
             "properties": {
-                "volume": {
-                    "type": "string",
-                    "description": "Volume name or GUID",
-                },
-                "period": {
-                    "type": "string",
-                    "description": "Time period (default: PT3H)",
-                },
+                "volume": VOLUME_PROPERTY,
+                "period": PERIOD_PROPERTY_3H,
                 "show_outliers": {
                     "type": "boolean",
                     "description": "Show detailed outlier information (default: true)",
@@ -869,48 +908,34 @@ class GetVolumePropagationMetricsTool(BaseTool):
             "required": ["volume"],
         }
 
-    async def execute(self, arguments: Dict[str, Any]) -> List[TextContent]:
-        try:
-            volume_id = arguments.get("volume", "").strip()
-            if not volume_id:
-                return self.format_error("Volume name or GUID required")
+    async def _do_execute(self, arguments: Dict[str, Any]) -> List[TextContent]:
+        volume_id = arguments.get("volume", "").strip()
+        if not volume_id:
+            return self.format_error("Volume name or GUID required")
 
-            period = arguments.get("period", "PT3H")
-            show_outliers = arguments.get("show_outliers", True)
+        period = arguments.get("period", "PT3H")
+        show_outliers = arguments.get("show_outliers", True)
 
-            volume_guid, _ = await self.integration.resolve_volume_identifier(volume_id)
-            if not volume_guid:
-                return self.format_error(f"Volume not found: {volume_id}")
+        volume_guid, serials = await self._resolve_volume(volume_id)
 
-            serials = await self.integration.get_filer_serials_for_volume(volume_guid)
-            if not serials:
-                return self.format_error(f"No filers found for volume: {volume_id}")
+        analysis = await self.propagation_client.get_volume_data_propagation_analysis(
+            volume_guid=volume_guid,
+            serial_numbers=serials,
+            period=period,
+        )
 
-            analysis = await self.api_client.get_volume_data_propagation_analysis(
-                volume_guid=volume_guid,
-                serial_numbers=serials,
-                period=period,
-            )
+        if not analysis.events:
+            return [
+                TextContent(
+                    type="text",
+                    text=f"No propagation data for {volume_id} in period {period}",
+                )
+            ]
 
-            if not analysis.events:
-                return [
-                    TextContent(
-                        type="text",
-                        text=f"No propagation data for {volume_id} in period {period}",
-                    )
-                ]
-
-            output = self._format_output(
-                volume_id, volume_guid, period, analysis, show_outliers
-            )
-            return [TextContent(type="text", text=output)]
-
-        except Exception as e:  # pragma: no cover - defensive
-            logger.error(f"Propagation metrics tool error: {e}")
-            import traceback
-
-            traceback.print_exc()
-            return self.format_error(str(e))
+        output = self._format_output(
+            volume_id, volume_guid, period, analysis, show_outliers
+        )
+        return [TextContent(type="text", text=output)]
 
     def _format_output(self, vol_id, vol_guid, period, analysis, show_outliers) -> str:
         stats = analysis.get_statistics()
@@ -1112,7 +1137,7 @@ def _format_timestamp(value: Any) -> str:
 # ============================================================================
 
 
-class GetVolumeLatestVersionTool(BaseTool):
+class GetVolumeLatestVersionTool(BaseVolumeTelemetryTool):
     """Tool to get the latest volume version and which appliance created it."""
     
     def __init__(
@@ -1122,88 +1147,62 @@ class GetVolumeLatestVersionTool(BaseTool):
     ):
         super().__init__(
             name="get_volume_latest_version",
-            description="[TELEMETRY] Get the latest volume/snapshot version number and which appliance created it. USE FOR: 'What is the latest version?', 'Latest snapshot version?', 'Which appliance created the latest snapshot?', 'When was the latest snapshot?'. Shows the highest volume_version across all appliances and when it was created."
+            description="[TELEMETRY] Get the latest volume/snapshot version number and which appliance created it. USE FOR: 'What is the latest version?', 'Latest snapshot version?', 'Which appliance created the latest snapshot?', 'When was the latest snapshot?'. Shows the highest volume_version across all appliances and when it was created.",
+            integration_helper=integration_helper,
+            protection_client=protection_client,
         )
-        self.protection_client = protection_client
-        self.integration = integration_helper
     
     def get_schema(self) -> Dict[str, Any]:
-        """Get schema."""
         return {
             "type": "object",
             "properties": {
-                "volume": {
-                    "type": "string",
-                    "description": "Volume name or GUID"
-                },
-                "period": {
-                    "type": "string",
-                    "description": "Time period to check (default: PT3H)",
-                    "default": "PT3H"
-                }
+                "volume": VOLUME_PROPERTY,
+                "period": PERIOD_PROPERTY_3H,
             },
             "required": ["volume"]
         }
-    
-    async def execute(self, arguments: Dict[str, Any]) -> List[TextContent]:
-        """Execute the tool."""
-        try:
-            volume_id = arguments.get("volume", "").strip()
-            if not volume_id:
-                return self.format_error("Volume name or GUID required")
-            
-            period = arguments.get("period", "PT3H")
-            
-            # Resolve volume
-            volume_guid, _ = await self.integration.resolve_volume_identifier(volume_id)
-            if not volume_guid:
-                return self.format_error(f"Volume not found: {volume_id}")
-            
-            # Get serials
-            serials = await self.integration.get_filer_serials_for_volume(volume_guid)
-            if not serials:
-                return self.format_error(f"No filers found for volume: {volume_id}")
-            
-            # Get protection data to find latest snapshot
-            analysis = await self.protection_client.get_volume_data_protection_analysis(
-                volume_guid, serials, period
-            )
-            
-            if not analysis.complete_snapshots:
-                return [TextContent(
-                    type="text",
-                    text=f"No snapshot data found for {volume_id} in period {period}"
-                )]
-            
-            latest = analysis.latest_snapshot
-            
-            output = (
-                f"📌 LATEST VOLUME VERSION\n\n"
-                f"Volume: {volume_id}\n"
-                f"Latest Version: {latest.volume_version}\n"
-                f"Created By: {latest.appliance} ({latest.serial_number})\n"
-                f"Completed At: {latest.timestamp_str}\n\n"
-                f"Protection Metrics:\n"
-                f"  Avg Time Unprotected: {latest.format_duration(latest.protect_mean_seconds)}\n"
-                f"  Max Time Unprotected: {latest.format_duration(latest.protect_max_seconds)}\n"
-                f"  Oldest Unprotected Data: {latest.format_duration(latest.oud_seconds)}\n"
-                f"  Files Protected: {latest.file_count_total}\n\n"
-                f"Snapshot Phases:\n"
-                f"  Data Phase: {latest.format_duration(latest.data_phase_duration_seconds)}\n"
-                f"  Metadata Phase: {latest.format_duration(latest.metadata_phase_duration_seconds)}\n"
-                f"  Total Duration: {latest.format_duration(latest.total_snapshot_duration_seconds)}\n"
-            )
-            
-            return [TextContent(type="text", text=output)]
-            
-        except Exception as e:
-            logger.error(f"Error: {e}")
-            import traceback
-            traceback.print_exc()
-            return self.format_error(str(e))
+
+    async def _do_execute(self, arguments: Dict[str, Any]) -> List[TextContent]:
+        volume_id = arguments.get("volume", "").strip()
+        if not volume_id:
+            return self.format_error("Volume name or GUID required")
+        
+        period = arguments.get("period", "PT3H")
+        volume_guid, serials = await self._resolve_volume(volume_id)
+        
+        analysis = await self.protection_client.get_volume_data_protection_analysis(
+            volume_guid, serials, period
+        )
+        
+        if not analysis.complete_snapshots:
+            return [TextContent(
+                type="text",
+                text=f"No snapshot data found for {volume_id} in period {period}"
+            )]
+        
+        latest = analysis.latest_snapshot
+        
+        output = (
+            f"📌 LATEST VOLUME VERSION\n\n"
+            f"Volume: {volume_id}\n"
+            f"Latest Version: {latest.volume_version}\n"
+            f"Created By: {latest.appliance} ({latest.serial_number})\n"
+            f"Completed At: {latest.timestamp_str}\n\n"
+            f"Protection Metrics:\n"
+            f"  Avg Time Unprotected: {latest.format_duration(latest.protect_mean_seconds)}\n"
+            f"  Max Time Unprotected: {latest.format_duration(latest.protect_max_seconds)}\n"
+            f"  Oldest Unprotected Data: {latest.format_duration(latest.oud_seconds)}\n"
+            f"  Files Protected: {latest.file_count_total}\n\n"
+            f"Snapshot Phases:\n"
+            f"  Data Phase: {latest.format_duration(latest.data_phase_duration_seconds)}\n"
+            f"  Metadata Phase: {latest.format_duration(latest.metadata_phase_duration_seconds)}\n"
+            f"  Total Duration: {latest.format_duration(latest.total_snapshot_duration_seconds)}\n"
+        )
+        
+        return [TextContent(type="text", text=output)]
 
 
-class CheckApplianceSyncStatusTool(BaseTool):
+class CheckApplianceSyncStatusTool(BaseVolumeTelemetryTool):
     """Tool to check if an appliance is up-to-date with latest snapshot."""
     
     def __init__(
@@ -1214,179 +1213,84 @@ class CheckApplianceSyncStatusTool(BaseTool):
     ):
         super().__init__(
             name="check_appliance_sync_status",
-            description="[TELEMETRY - SYNC STATUS] Check if a specific appliance is up-to-date with the latest volume snapshot. Shows sync lag and detects stale appliances. USE FOR: 'Is appliance X up to date?', 'Check sync status for appliance', 'Is appliance behind?', 'Show appliance sync lag', 'Latest version on appliance X?'. Detects: appliances >1hr behind (lagging), >3hr behind (critical issue). Shows both latest snapshot created and latest sync completed."
+            description="[TELEMETRY - SYNC STATUS] Check if a specific appliance is up-to-date with the latest volume snapshot. Shows sync lag and detects stale appliances. USE FOR: 'Is appliance X up to date?', 'Check sync status for appliance', 'Is appliance behind?', 'Show appliance sync lag', 'Latest version on appliance X?'. Detects: appliances >1hr behind (lagging), >3hr behind (critical issue). Shows both latest snapshot created and latest sync completed.",
+            integration_helper=integration_helper,
+            protection_client=protection_client,
+            propagation_client=propagation_client,
         )
-        self.protection_client = protection_client
-        self.propagation_client = propagation_client
-        self.integration = integration_helper
     
     def get_schema(self) -> Dict[str, Any]:
-        """Get schema."""
         return {
             "type": "object",
             "properties": {
-                "volume": {
-                    "type": "string",
-                    "description": "Volume name or GUID"
-                },
-                "appliance": {
-                    "type": "string",
-                    "description": "Appliance name (description) or serial number to check"
-                },
-                "period": {
-                    "type": "string",
-                    "description": "Time period to analyze (default: PT6H)",
-                    "default": "PT6H"
-                }
+                "volume": VOLUME_PROPERTY,
+                "appliance": APPLIANCE_PROPERTY,
+                "period": PERIOD_PROPERTY_6H,
             },
             "required": ["volume", "appliance"]
         }
+
+    async def _do_execute(self, arguments: Dict[str, Any]) -> List[TextContent]:
+        volume_id = arguments.get("volume", "").strip()
+        appliance_id = arguments.get("appliance", "").strip()
+        
+        if not volume_id or not appliance_id:
+            return self.format_error("Both volume and appliance required")
+        
+        period = arguments.get("period", "PT6H")
+        volume_guid, serials = await self._resolve_volume(volume_id)
+        
+        protection = await self.protection_client.get_volume_data_protection_analysis(
+            volume_guid, serials, period
+        )
+        
+        if not protection.complete_snapshots:
+            return [TextContent(type="text", text=f"No snapshot data for {volume_id}")]
+        
+        propagation = await self.propagation_client.get_volume_data_propagation_analysis(
+            volume_guid, serials, period
+        )
+        
+        output = self._format_single_appliance_status(
+            volume_id, appliance_id, protection, propagation
+        )
+        return [TextContent(type="text", text=output)]
     
-    async def execute(self, arguments: Dict[str, Any]) -> List[TextContent]:
-        """Execute the tool."""
-        try:
-            volume_id = arguments.get("volume", "").strip()
-            appliance_id = arguments.get("appliance", "").strip()
-            
-            if not volume_id or not appliance_id:
-                return self.format_error("Both volume and appliance required")
-            
-            period = arguments.get("period", "PT6H")
-            
-            # Resolve volume
-            volume_guid, _ = await self.integration.resolve_volume_identifier(volume_id)
-            if not volume_guid:
-                return self.format_error(f"Volume not found: {volume_id}")
-            
-            # Get serials
-            serials = await self.integration.get_filer_serials_for_volume(volume_guid)
-            if not serials:
-                return self.format_error(f"No filers found for volume: {volume_id}")
-            
-            # Get protection data (to find latest snapshot overall)
-            protection = await self.protection_client.get_volume_data_protection_analysis(
-                volume_guid, serials, period
-            )
-            
-            if not protection.complete_snapshots:
-                return [TextContent(
-                    type="text",
-                    text=f"No snapshot data for {volume_id}"
-                )]
-            
-            # Find latest snapshot across ALL appliances
-            latest_overall = protection.latest_snapshot
-            
-            # Get propagation data (to see sync status)
-            propagation = await self.propagation_client.get_volume_data_propagation_analysis(
-                volume_guid, serials, period
-            )
-            
-            # Find this specific appliance's status
-            output = self._analyze_appliance_status(
-                volume_id,
-                appliance_id,
-                latest_overall,
-                protection,
-                propagation
-            )
-            
-            return [TextContent(type="text", text=output)]
-            
-        except Exception as e:
-            logger.error(f"Error: {e}")
-            import traceback
-            traceback.print_exc()
-            return self.format_error(str(e))
-    
-    def _analyze_appliance_status(
-        self,
-        volume_id: str,
-        appliance_id: str,
-        latest_overall,
-        protection,
-        propagation
+    def _format_single_appliance_status(
+        self, volume_id: str, appliance_id: str, protection, propagation
     ) -> str:
-        """Analyze specific appliance's sync status."""
+        """Format sync status for a single appliance."""
+        latest_overall = protection.latest_snapshot
+        status = _calculate_appliance_sync_status(
+            appliance_id, latest_overall, protection, propagation
+        )
         
-        # Find snapshots created by this appliance
-        appliance_snapshots = [
-            s for s in protection.complete_snapshots
-            if appliance_id in s.appliance or appliance_id in s.serial_number
-        ]
-        
-        # Find syncs TO this appliance
-        appliance_syncs = [
-            e for e in propagation.events
-            if appliance_id in e.sync_appliance or appliance_id in e.sync_serial_number
-        ]
-        
-        # Determine latest version on this appliance
-        latest_snapshot_version = None
-        latest_snapshot_time = None
-        latest_snapshot_source = "none"
-        
-        if appliance_snapshots:
-            latest_snap = max(appliance_snapshots, key=lambda s: s.volume_version)
-            latest_snapshot_version = latest_snap.volume_version
-            latest_snapshot_time = latest_snap.timestamp
-            latest_snapshot_source = "snapshot"
-        
-        if appliance_syncs:
-            latest_sync = max(appliance_syncs, key=lambda e: e.snapshot_version)
-            if (latest_snapshot_version is None or 
-                latest_sync.snapshot_version > latest_snapshot_version):
-                latest_snapshot_version = latest_sync.snapshot_version
-                latest_snapshot_time = latest_sync.sync_datetime
-                latest_snapshot_source = "sync"
-        
-        # Calculate lag
-        lag_versions = 0
-        lag_time = None
-        status = "✅ UP TO DATE"
-        
-        if latest_snapshot_version and latest_overall.volume_version:
-            lag_versions = latest_overall.volume_version - latest_snapshot_version
-            
-            if latest_snapshot_time and latest_overall.timestamp:
-                lag_time = latest_overall.timestamp - latest_snapshot_time
-                lag_hours = lag_time.total_seconds() / 3600
-                
-                if lag_versions > 0:
-                    if lag_hours > 3:
-                        status = "🚨 CRITICAL LAG"
-                    elif lag_hours > 1:
-                        status = "⚠️ LAGGING"
-                    else:
-                        status = "⏳ SLIGHTLY BEHIND"
-        
-        # Build output
         out = (
             f"🔍 APPLIANCE SYNC STATUS\n\n"
             f"=== APPLIANCE ===\n"
             f"Appliance: {appliance_id}\n"
             f"Volume: {volume_id}\n"
-            f"Status: {status}\n\n"
+            f"Status: {status['status_icon']} {status['status_text']}\n\n"
             f"=== LATEST SNAPSHOT (VOLUME-WIDE) ===\n"
             f"Version: {latest_overall.volume_version}\n"
             f"Created By: {latest_overall.appliance}\n"
             f"Completed: {latest_overall.timestamp_str}\n\n"
             f"=== THIS APPLIANCE'S LATEST VERSION ===\n"
-            f"Version: {latest_snapshot_version if latest_snapshot_version else 'No data'}\n"
-            f"Source: {latest_snapshot_source.upper()}\n"
+            f"Version: {status['version'] if status['version'] else 'No data'}\n"
+            f"Source: {status['source'].upper()}\n"
         )
         
-        if latest_snapshot_time:
-            out += f"Last Updated: {latest_snapshot_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        if status['time']:
+            out += f"Last Updated: {status['time'].strftime('%Y-%m-%d %H:%M:%S')}\n"
         
-        if lag_versions > 0:
+        if status['lag_versions'] > 0:
             out += (
                 f"\n=== ⚠️ SYNC LAG DETECTED ===\n"
-                f"Versions Behind: {lag_versions}\n"
+                f"Versions Behind: {status['lag_versions']}\n"
             )
-            if lag_time:
-                lag_hours = lag_time.total_seconds() / 3600
-                lag_minutes = lag_time.total_seconds() / 60
+            if status['lag_time']:
+                lag_hours = status['lag_time'].total_seconds() / 3600
+                lag_minutes = status['lag_time'].total_seconds() / 60
                 
                 out += f"Time Behind: {lag_hours:.1f} hours ({lag_minutes:.0f} minutes)\n"
                 
@@ -1402,24 +1306,24 @@ class CheckApplianceSyncStatusTool(BaseTool):
             out += "\n✅ Appliance is current with latest snapshot\n"
         
         # Show snapshot vs sync activity
-        if appliance_snapshots:
-            out += f"\nSnapshot Activity: {len(appliance_snapshots)} snapshots created by this appliance\n"
-            latest_created = max(appliance_snapshots, key=lambda s: s.volume_version)
-            out += f"  Last created: v{latest_created.volume_version} at {latest_created.timestamp_str}\n"
+        if status.get('snapshot_count', 0) > 0:
+            out += f"\nSnapshot Activity: {status['snapshot_count']} snapshots created by this appliance\n"
+            if status.get('last_snapshot'):
+                out += f"  Last created: v{status['last_snapshot']['version']} at {status['last_snapshot']['time']}\n"
         
-        if appliance_syncs:
-            out += f"\nSync Activity: {len(appliance_syncs)} syncs completed by this appliance\n"
-            latest_sync = max(appliance_syncs, key=lambda e: e.snapshot_version)
-            out += f"  Last synced: v{latest_sync.snapshot_version} at {latest_sync.sync_time_str}\n"
-            out += f"  Propagation time: {latest_sync.format_duration(latest_sync.propagation_duration)}\n"
+        if status.get('sync_count', 0) > 0:
+            out += f"\nSync Activity: {status['sync_count']} syncs completed by this appliance\n"
+            if status.get('last_sync'):
+                out += f"  Last synced: v{status['last_sync']['version']} at {status['last_sync']['time']}\n"
+                out += f"  Propagation time: {status['last_sync']['duration']}\n"
         
-        if not appliance_snapshots and not appliance_syncs:
+        if status.get('snapshot_count', 0) == 0 and status.get('sync_count', 0) == 0:
             out += "\n⚠️ No snapshot or sync activity found for this appliance in the selected period\n"
         
         return out
 
 
-class GetAllAppliancesSyncStatusTool(BaseTool):
+class GetAllAppliancesSyncStatusTool(BaseVolumeTelemetryTool):
     """Tool to check sync status for all appliances connected to a volume."""
     
     def __init__(
@@ -1430,75 +1334,46 @@ class GetAllAppliancesSyncStatusTool(BaseTool):
     ):
         super().__init__(
             name="get_all_appliances_sync_status",
-            description="[TELEMETRY - SYNC MONITORING] Check sync status for ALL appliances connected to a volume. Identifies lagging, stale, and out-of-sync appliances. USE FOR: 'Check sync status for all appliances', 'Which appliances are behind?', 'Show sync lag across appliances', 'Are all appliances up to date?', 'Sync health check'. Detects appliances >1hr behind (lagging) or >3hr behind (critical)."
+            description="[TELEMETRY - SYNC MONITORING] Check sync status for ALL appliances connected to a volume. Identifies lagging, stale, and out-of-sync appliances. USE FOR: 'Check sync status for all appliances', 'Which appliances are behind?', 'Show sync lag across appliances', 'Are all appliances up to date?', 'Sync health check'. Detects appliances >1hr behind (lagging) or >3hr behind (critical).",
+            integration_helper=integration_helper,
+            protection_client=protection_client,
+            propagation_client=propagation_client,
         )
-        self.protection_client = protection_client
-        self.propagation_client = propagation_client
-        self.integration = integration_helper
     
     def get_schema(self) -> Dict[str, Any]:
-        """Get schema."""
         return {
             "type": "object",
             "properties": {
-                "volume": {
-                    "type": "string",
-                    "description": "Volume name or GUID"
-                },
-                "period": {
-                    "type": "string",
-                    "description": "Time period to analyze (default: PT6H)"
-                }
+                "volume": VOLUME_PROPERTY,
+                "period": PERIOD_PROPERTY_6H,
             },
             "required": ["volume"]
         }
-    
-    async def execute(self, arguments: Dict[str, Any]) -> List[TextContent]:
-        """Execute the tool."""
-        try:
-            volume_id = arguments.get("volume", "").strip()
-            if not volume_id:
-                return self.format_error("Volume name or GUID required")
-            
-            period = arguments.get("period", "PT6H")
-            
-            # Resolve volume
-            volume_guid, _ = await self.integration.resolve_volume_identifier(volume_id)
-            if not volume_guid:
-                return self.format_error(f"Volume not found: {volume_id}")
-            
-            # Get serials
-            serials = await self.integration.get_filer_serials_for_volume(volume_guid)
-            if not serials:
-                return self.format_error(f"No filers found for volume: {volume_id}")
-            
-            # Get both datasets
-            protection = await self.protection_client.get_volume_data_protection_analysis(
-                volume_guid, serials, period
-            )
-            
-            propagation = await self.propagation_client.get_volume_data_propagation_analysis(
-                volume_guid, serials, period
-            )
-            
-            if not protection.complete_snapshots:
-                return [TextContent(
-                    type="text",
-                    text=f"No snapshot data for {volume_id}"
-                )]
-            
-            output = self._format_all_status(volume_id, protection, propagation, serials)
-            return [TextContent(type="text", text=output)]
-            
-        except Exception as e:
-            logger.error(f"Error: {e}")
-            import traceback
-            traceback.print_exc()
-            return self.format_error(str(e))
-    
-    def _format_all_status(self, volume_id, protection, propagation, all_serials) -> str:
-        """Format sync status for all appliances."""
+
+    async def _do_execute(self, arguments: Dict[str, Any]) -> List[TextContent]:
+        volume_id = arguments.get("volume", "").strip()
+        if not volume_id:
+            return self.format_error("Volume name or GUID required")
         
+        period = arguments.get("period", "PT6H")
+        volume_guid, serials = await self._resolve_volume(volume_id)
+        
+        protection = await self.protection_client.get_volume_data_protection_analysis(
+            volume_guid, serials, period
+        )
+        
+        propagation = await self.propagation_client.get_volume_data_propagation_analysis(
+            volume_guid, serials, period
+        )
+        
+        if not protection.complete_snapshots:
+            return [TextContent(type="text", text=f"No snapshot data for {volume_id}")]
+        
+        output = self._format_all_status(volume_id, protection, propagation)
+        return [TextContent(type="text", text=output)]
+    
+    def _format_all_status(self, volume_id, protection, propagation) -> str:
+        """Format sync status for all appliances."""
         latest_overall = protection.latest_snapshot
         
         out = (
@@ -1509,75 +1384,23 @@ class GetAllAppliancesSyncStatusTool(BaseTool):
             f"=== APPLIANCE STATUS ===\n\n"
         )
         
-        # Build status for each appliance
-        appliance_statuses = []
-        
         # Get unique appliances from both sources
         all_appliances = set()
-        
         for snap in protection.complete_snapshots:
             all_appliances.add((snap.appliance, snap.serial_number))
-        
         for event in propagation.events:
             all_appliances.add((event.sync_appliance, event.sync_serial_number))
         
+        # Calculate status for each appliance using shared helper
+        appliance_statuses = []
         for appliance_name, serial in all_appliances:
-            # Find latest version for this appliance
-            app_snapshots = [s for s in protection.complete_snapshots 
-                           if s.appliance == appliance_name or s.serial_number == serial]
-            
-            app_syncs = [e for e in propagation.events
-                        if e.sync_appliance == appliance_name or e.sync_serial_number == serial]
-            
-            latest_version = None
-            latest_time = None
-            source = "none"
-            
-            if app_snapshots:
-                latest_snap = max(app_snapshots, key=lambda s: s.volume_version)
-                latest_version = latest_snap.volume_version
-                latest_time = latest_snap.timestamp
-                source = "snapshot"
-            
-            if app_syncs:
-                latest_sync = max(app_syncs, key=lambda e: e.snapshot_version)
-                if latest_version is None or latest_sync.snapshot_version > latest_version:
-                    latest_version = latest_sync.snapshot_version
-                    latest_time = latest_sync.sync_datetime
-                    source = "sync"
-            
-            # Calculate lag
-            lag_versions = latest_overall.volume_version - (latest_version or 0)
-            lag_time = None
-            status_icon = "✅"
-            status_text = "UP TO DATE"
-            
-            if latest_time and latest_overall.timestamp:
-                lag_time = latest_overall.timestamp - latest_time
-                lag_hours = lag_time.total_seconds() / 3600
-                
-                if lag_versions > 0:
-                    if lag_hours > 3:
-                        status_icon = "🚨"
-                        status_text = "CRITICAL LAG"
-                    elif lag_hours > 1:
-                        status_icon = "⚠️"
-                        status_text = "LAGGING"
-                    else:
-                        status_icon = "⏳"
-                        status_text = "SLIGHTLY BEHIND"
-            
-            appliance_statuses.append({
-                "name": appliance_name,
-                "serial": serial,
-                "version": latest_version,
-                "time": latest_time,
-                "source": source,
-                "lag_versions": lag_versions,
-                "lag_time": lag_time,
-                "status_icon": status_icon,
-                "status_text": status_text
-            })
+            status = _calculate_appliance_sync_status(
+                appliance_name, latest_overall, protection, propagation,
+                match_serial=serial
+            )
+            status["name"] = appliance_name
+            status["serial"] = serial
+            appliance_statuses.append(status)
         
         # Sort by lag (worst first)
         appliance_statuses.sort(key=lambda x: x["lag_versions"], reverse=True)
@@ -1595,7 +1418,6 @@ class GetAllAppliancesSyncStatusTool(BaseTool):
             
             if app['lag_versions'] > 0:
                 out += f"   ⚠️ Versions Behind: {app['lag_versions']}\n"
-                
                 if app['lag_time']:
                     hours = app['lag_time'].total_seconds() / 3600
                     minutes = app['lag_time'].total_seconds() / 60
@@ -1622,3 +1444,110 @@ class GetAllAppliancesSyncStatusTool(BaseTool):
             out += "\n✅ All appliances are synchronized\n"
         
         return out
+
+
+def _calculate_appliance_sync_status(
+    appliance_id: str,
+    latest_overall,
+    protection,
+    propagation,
+    match_serial: str = None,
+) -> Dict[str, Any]:
+    """Calculate sync status for a single appliance.
+    
+    Shared logic used by both CheckApplianceSyncStatusTool and GetAllAppliancesSyncStatusTool.
+    
+    Args:
+        appliance_id: Appliance name or partial identifier
+        latest_overall: Latest snapshot across all appliances
+        protection: Protection analysis result
+        propagation: Propagation analysis result
+        match_serial: If provided, use exact serial match instead of substring
+    
+    Returns:
+        Dict with status info including: version, time, source, lag_versions, lag_time,
+        status_icon, status_text, snapshot_count, sync_count, last_snapshot, last_sync
+    """
+    # Find snapshots created by this appliance
+    if match_serial:
+        app_snapshots = [
+            s for s in protection.complete_snapshots
+            if s.appliance == appliance_id or s.serial_number == match_serial
+        ]
+        app_syncs = [
+            e for e in propagation.events
+            if e.sync_appliance == appliance_id or e.sync_serial_number == match_serial
+        ]
+    else:
+        app_snapshots = [
+            s for s in protection.complete_snapshots
+            if appliance_id in s.appliance or appliance_id in s.serial_number
+        ]
+        app_syncs = [
+            e for e in propagation.events
+            if appliance_id in e.sync_appliance or appliance_id in e.sync_serial_number
+        ]
+    
+    # Determine latest version on this appliance
+    latest_version = None
+    latest_time = None
+    source = "none"
+    last_snapshot = None
+    last_sync = None
+    
+    if app_snapshots:
+        latest_snap = max(app_snapshots, key=lambda s: s.volume_version)
+        latest_version = latest_snap.volume_version
+        latest_time = latest_snap.timestamp
+        source = "snapshot"
+        last_snapshot = {
+            "version": latest_snap.volume_version,
+            "time": latest_snap.timestamp_str,
+        }
+    
+    if app_syncs:
+        latest_sync_event = max(app_syncs, key=lambda e: e.snapshot_version)
+        if latest_version is None or latest_sync_event.snapshot_version > latest_version:
+            latest_version = latest_sync_event.snapshot_version
+            latest_time = latest_sync_event.sync_datetime
+            source = "sync"
+        last_sync = {
+            "version": latest_sync_event.snapshot_version,
+            "time": latest_sync_event.sync_time_str,
+            "duration": latest_sync_event.format_duration(latest_sync_event.propagation_duration),
+        }
+    
+    # Calculate lag
+    lag_versions = latest_overall.volume_version - (latest_version or 0)
+    lag_time = None
+    status_icon = "✅"
+    status_text = "UP TO DATE"
+    
+    if latest_time and latest_overall.timestamp:
+        lag_time = latest_overall.timestamp - latest_time
+        lag_hours = lag_time.total_seconds() / 3600
+        
+        if lag_versions > 0:
+            if lag_hours > 3:
+                status_icon = "🚨"
+                status_text = "CRITICAL LAG"
+            elif lag_hours > 1:
+                status_icon = "⚠️"
+                status_text = "LAGGING"
+            else:
+                status_icon = "⏳"
+                status_text = "SLIGHTLY BEHIND"
+    
+    return {
+        "version": latest_version,
+        "time": latest_time,
+        "source": source,
+        "lag_versions": lag_versions,
+        "lag_time": lag_time,
+        "status_icon": status_icon,
+        "status_text": status_text,
+        "snapshot_count": len(app_snapshots),
+        "sync_count": len(app_syncs),
+        "last_snapshot": last_snapshot,
+        "last_sync": last_sync,
+    }
