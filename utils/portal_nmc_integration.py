@@ -15,6 +15,7 @@ class NMCPortalIntegration:
     def __init__(self, volumes_client: VolumesAPIClient, filers_client: FilersAPIClient):
         self.volumes_client = volumes_client
         self.filers_client = filers_client
+        self._cached_filers: Optional[List[Dict[str, Any]]] = None
     
     async def get_volume_guid_by_name(self, volume_name: str) -> Optional[str]:
         """
@@ -189,6 +190,59 @@ class NMCPortalIntegration:
         except Exception as e:
             logger.error(f"Error looking up filer GUID: {e}")
             return None
+
+    async def resolve_filer_identifier(self, identifier: str) -> Tuple[Optional[str], str]:
+        """Resolve filer identifier (serial, name, or GUID) to a serial number."""
+        normalized = (identifier or "").strip()
+        if not normalized:
+            return None, "unknown"
+
+        normalized_lower = normalized.lower()
+
+        filers = await self._get_cached_filers()
+        for filer in filers:
+            serial = (filer.get("serial_number") or "").strip()
+            description = (filer.get("description") or "").strip()
+            guid = (filer.get("guid") or "").strip()
+            name = (filer.get("name") or "").strip()
+
+            if serial and serial.lower() == normalized_lower:
+                logger.info(f"Resolved filer serial directly: {serial}")
+                return serial, "serial"
+            if description and description.lower() == normalized_lower and serial:
+                logger.info(f"Resolved filer via description: {description} -> {serial}")
+                return serial, "description"
+            if guid and guid.lower() == normalized_lower and serial:
+                logger.info(f"Resolved filer via GUID: {guid} -> {serial}")
+                return serial, "guid"
+            if name and name.lower() == normalized_lower and serial:
+                logger.info(f"Resolved filer via name: {name} -> {serial}")
+                return serial, "name"
+
+        # Could not resolve via NMC inventory; assume caller provided serial already
+        logger.warning(f"Filer identifier '{identifier}' not found in NMC inventory; using as-is")
+        return normalized, "provided"
+
+    async def _get_cached_filers(self) -> List[Dict[str, Any]]:
+        """Return cached filer list, fetching from NMC if necessary."""
+        if self._cached_filers is not None:
+            return self._cached_filers
+
+        try:
+            response = await self.filers_client.list_filers()
+        except Exception as exc:
+            logger.error(f"Failed to fetch filers for cache: {exc}")
+            self._cached_filers = []
+            return self._cached_filers
+
+        if "error" in response:
+            logger.error(f"Filer list error: {response['error']}")
+            self._cached_filers = []
+        else:
+            self._cached_filers = response.get("items", [])
+            logger.info(f"Cached {len(self._cached_filers)} filer records for lookup")
+
+        return self._cached_filers
     
     async def resolve_volume_identifier(self, identifier: str) -> Tuple[Optional[str], str]:
         """

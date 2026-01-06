@@ -4,6 +4,7 @@
 import sys
 import httpx
 import asyncio
+import base64
 from typing import Dict, Any, Optional
 from abc import ABC, abstractmethod
 from api.portal_auth_api import PortalAuthAPIClient
@@ -131,8 +132,27 @@ class PortalBaseAPIClient(ABC):
                     # Raise for other HTTP errors
                     response.raise_for_status()
                     
-                    # Parse and return response
-                    return response.json()
+                    # Parse and return response, falling back to raw content if not JSON
+                    try:
+                        return response.json()
+                    except ValueError:
+                        content_type = response.headers.get("Content-Type", "")
+                        raw_bytes = response.content
+                        try:
+                            raw_text = raw_bytes.decode("utf-8")
+                            return {
+                                "content_type": content_type,
+                                "raw_text": raw_text,
+                                "status_code": response.status_code
+                            }
+                        except UnicodeDecodeError:
+                            encoded = base64.b64encode(raw_bytes).decode("utf-8")
+                            return {
+                                "content_type": content_type,
+                                "raw_bytes_b64": encoded,
+                                "status_code": response.status_code,
+                                "note": "Binary payload encoded as base64"
+                            }
                     
             except httpx.HTTPStatusError as e:
                 logger.error(f"Portal API HTTP error: {e}")
@@ -188,6 +208,10 @@ class PortalBaseAPIClient(ABC):
     async def delete(self, endpoint: str, **kwargs) -> Dict[str, Any]:
         """Make a DELETE request."""
         return await self._make_request("DELETE", endpoint, **kwargs)
+    
+    async def patch(self, endpoint: str, **kwargs) -> Dict[str, Any]:
+        """Make a PATCH request."""
+        return await self._make_request("PATCH", endpoint, **kwargs)
     
     @abstractmethod
     async def test_connection(self) -> bool:

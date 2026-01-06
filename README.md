@@ -29,6 +29,14 @@ Note: Nasuni Management MCP Server is Claude-specific using Anthropic's MCP fram
 - **Usage Statistics**: Comprehensive usage reporting and analysis
 - **Notification Management**: Centralized alert and notification handling
 
+### Portal Management & Governance
+- **Account & License Insights**: Pull the latest Portal account profile with contact metadata for quick onboarding or support escalations.
+- **Audit Controls**: Search audit records, trigger exports, and download evidence directly from Claude without touching the Portal UI.
+- **Configuration at a Glance**: Inspect SSO, S3 Edge, and Web Access SSO settings or update them with explicit payloads when changes are needed.
+- **Appliance & File IQ Inventory**: Enumerate Edge and File IQ appliances registered in Portal, including service settings like event forwarders and S3 Edge status.
+- **IAM & Key Management**: Review users, roles, permissions, service keys, and user keys – with optional create/update/delete flows for automation use cases.
+- **SRaaS / UaaS Visibility**: List SRaaS runs and detailed stack metadata (NDS configs, blob keys) to speed up troubleshooting UniFS as a Service deployments.
+
 ## Prerequisites
 
 ### Python Requirements
@@ -259,6 +267,26 @@ API_TIMEOUT=30.0
 # DEBUG=true
 # LOG_LEVEL=DEBUG
 ```
+
+#### Portal Integration (Optional)
+Portal/Ops IQ tools only register when the MCP server can authenticate to the Nasuni Portal APIs. Starting now, setting **either** the service credentials (`PORTAL_SERVICE_KEY` + `PORTAL_SERVICE_SECRET`) **or** valid tokens (`PORTAL_ACCESS_TOKEN` and/or `PORTAL_REFRESH_TOKEN`) will enable the Portal block in `server/mcp_server.py`. If all of these values are blank (the default in `.env.example`), Claude's MCP Inspector will only show the core NMC tools. To enable the Portal-specific telemetry, protection, propagation, and management tools:
+
+1. Populate these variables in your `.env` file (values provided by Nasuni Support):
+  ```env
+  PORTAL_API_BASE_URL="https://am1.portal.api.nasuni.com"  # or your regional URL
+  PORTAL_SERVICE_KEY="<service key>"
+  PORTAL_SERVICE_SECRET="<service secret>"
+  ```
+  Optional but recommended when you already have valid tokens:
+  ```env
+  PORTAL_ACCESS_TOKEN="<access token>"
+  PORTAL_REFRESH_TOKEN="<refresh token>"
+  ```
+2. Save the file and restart the MCP server (`python main.py`) so the new credentials are loaded.
+3. Watch the startup log for `🌐 Setting up Portal Integration (Ops IQ)...` followed by `✅ Portal integration setup complete`. If either the Volumes or Filers API clients fail to initialize, the Portal telemetry tools will also be skipped—fix those errors first.
+4. Open Claude Desktop → Developer → MCP Inspector and refresh. The Portal tools (telemetry, protection metrics, propagation metrics, combined metrics, management, and auth) should now appear.
+
+> Tip: You can also run `python main.py` directly from a terminal to print the "Tool Registration Summary" banner, which lists every category that was successfully registered. This is the fastest way to confirm whether Portal tools are available before opening Claude.
 
 ### Authentication Setup
 

@@ -186,9 +186,9 @@ class ToolRegistry:
         print("✅ Registered 3 Portal authentication tools", file=sys.stderr)
     
     def register_portal_protection_metrics_tools(self, portal_client, integration_helper):
-        from tools.portal_protection_tools import (
+        from tools.portal_telemetry_tools import (
             GetVolumeProtectionMetricsTool,
-            CompareVolumeProtectionMetricsTool  # Make sure this matches
+            CompareVolumeProtectionMetricsTool,
         )
         
         self.register_tool(GetVolumeProtectionMetricsTool(portal_client, integration_helper))
@@ -199,9 +199,7 @@ class ToolRegistry:
     
     def register_portal_propagation_metrics_tools(self, propagation_client, integration_helper):
         """Register Portal data propagation (sync timing) tools."""
-        from tools.portal_propagation_tools import (
-            GetVolumePropagationMetricsTool
-        )
+        from tools.portal_telemetry_tools import GetVolumePropagationMetricsTool
         
         self.register_tool(GetVolumePropagationMetricsTool(propagation_client, integration_helper))
         
@@ -209,10 +207,8 @@ class ToolRegistry:
     
     def register_portal_combined_metrics_tools(self, protection_client, propagation_client, integration_helper):
         """Register Portal combined (end-to-end) and sync status tools."""
-        from tools.portal_protection_tools import (
-            GetEndToEndProtectionTimingTool
-        )
-        from tools.portal_appliance_sync_status_tools import (
+        from tools.portal_telemetry_tools import (
+            GetEndToEndProtectionTimingTool,
             GetVolumeLatestVersionTool,
             CheckApplianceSyncStatusTool,
             GetAllAppliancesSyncStatusTool
@@ -232,16 +228,77 @@ class ToolRegistry:
         
         print("✅ Registered 4 Portal combined & sync status tools", file=sys.stderr)
 
+    def register_portal_telemetry_tools(
+        self,
+        appliance_client,
+        volume_client,
+        integration_helper,
+    ):
+        """Register Portal Ops IQ telemetry tools for appliances and volumes."""
+        print("🔍 DEBUG: register_portal_telemetry_tools method ENTERED", file=sys.stderr)
+        print(f"🔍 DEBUG: appliance_client={appliance_client}", file=sys.stderr)
+        print(f"🔍 DEBUG: volume_client={volume_client}", file=sys.stderr)
+        print(f"🔍 DEBUG: integration_helper={integration_helper}", file=sys.stderr)
+        
+        from tools.portal_telemetry_tools import (
+            PortalApplianceTelemetryTool,
+            PortalVolumeTelemetryTool,
+        )
+        from api.portal_telemetry_api import (
+            APPLIANCE_TELEMETRY_CONFIG,
+            VOLUME_TELEMETRY_CONFIG,
+        )
+        
+        print(f"🔍 DEBUG: APPLIANCE_TELEMETRY_CONFIG has {len(APPLIANCE_TELEMETRY_CONFIG)} entries", file=sys.stderr)
+        print(f"🔍 DEBUG: VOLUME_TELEMETRY_CONFIG has {len(VOLUME_TELEMETRY_CONFIG)} entries", file=sys.stderr)
+
+        print("📦 Registering Portal telemetry tools...", file=sys.stderr)
+        count = 0
+        
+        for metric_key in APPLIANCE_TELEMETRY_CONFIG.keys():
+            try:
+                tool = PortalApplianceTelemetryTool(metric_key, appliance_client, integration_helper)
+                self.register_tool(tool)
+                count += 1
+            except Exception as e:
+                print(f"  ❌ Failed to register appliance metric '{metric_key}': {e}", file=sys.stderr)
+                import traceback
+                traceback.print_exc(file=sys.stderr)
+
+        for metric_key in VOLUME_TELEMETRY_CONFIG.keys():
+            try:
+                tool = PortalVolumeTelemetryTool(metric_key, volume_client, integration_helper)
+                self.register_tool(tool)
+                count += 1
+            except Exception as e:
+                print(f"  ❌ Failed to register volume metric '{metric_key}': {e}", file=sys.stderr)
+                import traceback
+                traceback.print_exc(file=sys.stderr)
+
+        print(f"✅ Registered {count} Portal telemetry tools", file=sys.stderr)
+
 
     def get_tool_list(self) -> List[Tool]:
         """Get list of all registered tools for MCP."""
         tools = []
+        failed_tools = []
+        
         for name, tool in self.tools.items():
-            tools.append(Tool(
-                name=name,
-                description=tool.description,
-                inputSchema=tool.get_schema()
-            ))
+            try:
+                tools.append(Tool(
+                    name=name,
+                    description=tool.description,
+                    inputSchema=tool.get_schema()
+                ))
+            except Exception as e:
+                failed_tools.append((name, str(e)))
+                print(f"  ⚠️  Tool '{name}' failed to serialize: {e}", file=sys.stderr)
+        
+        if failed_tools:
+            print(f"\n❌ {len(failed_tools)} tools failed to serialize:", file=sys.stderr)
+            for name, error in failed_tools:
+                print(f"   - {name}: {error}", file=sys.stderr)
+        
         return tools
     
     def get_tool_names(self) -> List[str]:
@@ -279,15 +336,14 @@ class ToolRegistry:
             'credential': [],
             'notification': [],
             'volume_filer': [],
-            'telemetry': []
+            'portal': []
         }
         
         for name in self.tools.keys():
             
-            if ('protection_metrics' in name or 
-            'propagation_metrics' in name or
-            'end_to_end' in name):
-                tool_categories['telemetry'].append(name)
+            # Portal tools (auth and telemetry)
+            if name.startswith('portal_'):
+                tool_categories['portal'].append(name)
             # Health monitoring
             elif 'filer_health' in name or 'health' in name:
                 tool_categories['health'].append(name)

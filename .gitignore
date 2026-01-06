@@ -88,3 +88,7 @@ Thumbs.db
 config/local_settings.py
 test_data/
 backup/
+
+# Generated launcher scripts (created by installer.py)
+nasuni-management-mcp
+nasuni-management-mcp.bat

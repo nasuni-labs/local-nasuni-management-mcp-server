@@ -131,22 +131,24 @@ class MCPServer:
                 # Setup Portal Protection & Propagation Tools
                 if volumes_client is not None and filers_client is not None:
                     try:
-                        from api.portal_data_protection_api import PortalDataProtectionAPIClient
-                        from api.portal_data_propagation_api import PortalDataPropagationAPIClient
+                        from api.portal_telemetry_api import (
+                            PortalApplianceTelemetryAPIClient,
+                            PortalVolumeTelemetryAPIClient,
+                        )
                         from utils.portal_nmc_integration import NMCPortalIntegration
                         
                         # Create Portal clients
-                        portal_protection_client = PortalDataProtectionAPIClient(
-                            config.portal_config, 
-                            portal_auth_client
-                        )
-                        print("✅ Created Portal data protection client", file=sys.stderr)
-                        
-                        portal_propagation_client = PortalDataPropagationAPIClient(
+                        portal_appliance_telemetry_client = PortalApplianceTelemetryAPIClient(
                             config.portal_config,
-                            portal_auth_client
+                            portal_auth_client,
                         )
-                        print("✅ Created Portal data propagation client", file=sys.stderr)
+                        print("✅ Created Portal appliance telemetry client", file=sys.stderr)
+
+                        portal_volume_telemetry_client = PortalVolumeTelemetryAPIClient(
+                            config.portal_config,
+                            portal_auth_client,
+                        )
+                        print("✅ Created Portal volume telemetry client (protection + propagation)", file=sys.stderr)
                         
                         # Create integration helper
                         integration_helper = NMCPortalIntegration(
@@ -157,23 +159,30 @@ class MCPServer:
                         
                         # Register protection metrics tools
                         self.tool_registry.register_portal_protection_metrics_tools(
-                            portal_protection_client,
+                            portal_volume_telemetry_client,
                             integration_helper
                         )
                         
                         # Register propagation metrics tools
                         self.tool_registry.register_portal_propagation_metrics_tools(
-                            portal_propagation_client,
+                            portal_volume_telemetry_client,
                             integration_helper
                         )
                         
                         # Register combined metrics tools
                         self.tool_registry.register_portal_combined_metrics_tools(
-                            portal_protection_client,
-                            portal_propagation_client,
+                            portal_volume_telemetry_client,
+                            portal_volume_telemetry_client,
                             integration_helper
                         )
-                            
+
+                        # Register Ops IQ telemetry explorer tools
+                        self.tool_registry.register_portal_telemetry_tools(
+                            portal_appliance_telemetry_client,
+                            portal_volume_telemetry_client,
+                            integration_helper,
+                        )
+
                     except ImportError as e:
                         print(f"⚠️ Portal metrics import error: {e}", file=sys.stderr)
                         import traceback
