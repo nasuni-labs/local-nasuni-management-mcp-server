@@ -468,19 +468,6 @@ class PortalVolumeTelemetryAPIClient(PortalBaseAPIClient):
         )
         return DataPropagationAnalysis(events, metadata)
 
-    async def test_connection(self) -> bool:
-        """Test basic connectivity by ensuring authentication works."""
-        try:
-            return await self._ensure_authenticated()
-        except Exception:
-            return False
-
-
-
-
-class PortalSnapshotTimelineAPIClient(PortalVolumeTelemetryAPIClient):
-    """Volume telemetry client for snapshot timeline analysis."""
-
     async def get_volume_snapshot_timeline(
         self,
         volume_guid: str,
@@ -489,6 +476,7 @@ class PortalSnapshotTimelineAPIClient(PortalVolumeTelemetryAPIClient):
         smart_sampling: bool = True,
         chart_width: int = 1000,
     ) -> Dict[str, Any]:
+        """Fetch snapshot timeline data for a volume."""
         self._require_serial_numbers(serial_numbers)
         endpoint = f"/telemetry/volumes/{volume_guid}/snapshot_timeline"
         payload = self._build_volume_payload(
@@ -509,6 +497,7 @@ class PortalSnapshotTimelineAPIClient(PortalVolumeTelemetryAPIClient):
         period: str = "PT3H",
         smart_sampling: bool = True,
     ) -> SnapshotTimelineAnalysis:
+        """Parse snapshot timeline telemetry into SnapshotTimelineAnalysis."""
         response = await self.get_volume_snapshot_timeline(
             volume_guid=volume_guid,
             serial_numbers=serial_numbers,
@@ -552,11 +541,17 @@ class PortalSnapshotTimelineAPIClient(PortalVolumeTelemetryAPIClient):
         )
         return SnapshotTimelineAnalysis(data_events, metadata_events, metadata)
 
+    async def test_connection(self) -> bool:
+        """Test basic connectivity by ensuring authentication works."""
+        try:
+            return await self._ensure_authenticated()
+        except Exception:
+            return False
+
 
 __all__ = [
     "APPLIANCE_TELEMETRY_CONFIG",
     "VOLUME_TELEMETRY_CONFIG",
     "PortalApplianceTelemetryAPIClient",
     "PortalVolumeTelemetryAPIClient",
-    "PortalSnapshotTimelineAPIClient",
 ]
