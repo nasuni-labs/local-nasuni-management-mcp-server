@@ -1,69 +1,47 @@
 #!/usr/bin/env python3
-"""Portal Ops IQ telemetry MCP tools for appliance and volume metrics."""
+"""Portal Ops IQ volume telemetry tools.
+
+This module provides tools for volume-focused telemetry operations:
+- PortalVolumeTelemetryTool: Dynamic metric tool for volume metrics
+- GetVolumeProtectionMetricsTool: Data protection analysis
+- CompareVolumeProtectionMetricsTool: Cross-volume comparison
+- GetEndToEndProtectionTimingTool: Complete protection cycle timing
+- GetVolumePropagationMetricsTool: Sync timing metrics
+- GetVolumeLatestVersionTool: Latest snapshot version info
+- GetAllAppliancesSyncStatusTool: Multi-appliance sync monitoring
+- CheckApplianceSyncStatusTool: Single appliance sync status check
+"""
 
 from __future__ import annotations
 
-import json
-from datetime import datetime, timezone
-from statistics import StatisticsError, mean
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 from mcp.types import TextContent
 
 from api.portal_telemetry_api import (
-    APPLIANCE_TELEMETRY_CONFIG,
     VOLUME_TELEMETRY_CONFIG,
-    PortalApplianceTelemetryAPIClient,
     PortalVolumeTelemetryAPIClient,
 )
 from tools.base_tool import BaseTool
 from utils.portal_nmc_integration import NMCPortalIntegration
 from config.logging_setup import get_logger
 
+from tools.portal_telemetry._common import (
+    VOLUME_PROPERTY,
+    APPLIANCE_PROPERTY,
+    PERIOD_PROPERTY_3H,
+    PERIOD_PROPERTY_6H,
+    _extract_primary_records,
+    _summarize_records,
+    _format_metadata,
+    _raw_preview,
+)
+
 logger = get_logger(__name__)
 
-_TIME_FIELDS = {
-    "time",
-    "timestamp",
-    "start",
-    "start_time",
-    "end",
-    "end_time",
-    "bucket_start",
-    "bucket_end",
-    "completed_at",
-    "created_at",
-}
 
 # ============================================================================
-# COMMON SCHEMA PROPERTIES (DRY)
-# ============================================================================
-
-VOLUME_PROPERTY = {
-    "type": "string",
-    "description": "Volume name or GUID",
-}
-
-PERIOD_PROPERTY_3H = {
-    "type": "string",
-    "description": "Time period for analysis (default: PT3H)",
-    "default": "PT3H",
-}
-
-PERIOD_PROPERTY_6H = {
-    "type": "string",
-    "description": "Time period to analyze (default: PT6H)",
-    "default": "PT6H",
-}
-
-APPLIANCE_PROPERTY = {
-    "type": "string",
-    "description": "Appliance name (description) or serial number",
-}
-
-
-# ============================================================================
-# BASE CLASS FOR VOLUME TELEMETRY TOOLS (DRY)
+# BASE CLASS FOR VOLUME TELEMETRY TOOLS
 # ============================================================================
 
 
@@ -135,196 +113,16 @@ class BaseVolumeTelemetryTool(BaseTool):
 
 
 # ============================================================================
-# DYNAMIC METRIC TOOLS (Config-driven, one tool per metric)
+# DYNAMIC VOLUME METRIC TOOL (Config-driven)
 # ============================================================================
 
 
-class PortalApplianceTelemetryTool(BaseTool):
-    """Tool for querying a single Portal appliance telemetry metric."""
-
-    def __init__(
-        self,
-        metric_key: str,
-        api_client: PortalApplianceTelemetryAPIClient,
-        integration_helper: NMCPortalIntegration,
-    ):
-        if metric_key not in APPLIANCE_TELEMETRY_CONFIG:
-            raise ValueError(f"Unsupported appliance metric '{metric_key}'")
-
-        config = APPLIANCE_TELEMETRY_CONFIG[metric_key]
-        description = (
-            f"[TELEMETRY] Portal Ops IQ appliance metric — {config['display_name']}. "
-            f"{config['description']} Accepts a filer serial/name and returns aggregated statistics with optional raw data."
-        )
-        super().__init__(
-            name=f"portal_appliance_{metric_key}",
-            description=description,
-        )
-        self.metric_key = metric_key
-        self.metric_config = config
-        self.api_client = api_client
-        self.integration = integration_helper
-
-    def get_schema(self) -> Dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "appliance": {
-                    "type": "string",
-                    "description": "Filer serial number or name",
-                },
-                "period": {
-                    "type": "string",
-                    "description": (
-                        "ISO 8601 duration or explicit range (default PT3H)."
-                    ),
-                    "default": "PT3H",
-                },
-                "panel_width": {
-                    "type": "integer",
-                    "description": "Panel width in pixels (100-5200) for sampling hints.",
-                },
-                "bin_size": {
-                    "type": "integer",
-                    "description": "Bin size in seconds (60-3600) for sampling hints.",
-                },
-                "timezone_offset_minutes": {
-                    "type": "integer",
-                    "description": (
-                        "Optional timezone offset minutes (only used for health_score)."
-                    ),
-                },
-                "include_raw": {
-                    "type": "boolean",
-                    "description": "Include a truncated JSON preview of the raw payload.",
-                    "default": False,
-                },
-            },
-            "required": ["appliance"],
-            "additionalProperties": False,
-        }
-
-    async def execute(self, arguments: Dict[str, Any]) -> List[TextContent]:
-        try:
-            appliance = arguments.get("appliance", "").strip()
-            period = arguments.get("period", "PT3H")
-            panel_width = arguments.get("panel_width")
-            bin_size = arguments.get("bin_size")
-            tz_offset = arguments.get("timezone_offset_minutes")
-            include_raw = arguments.get("include_raw", False)
-
-            if not appliance:
-                return self.format_error("Appliance identifier is required")
-
-            serial_number, match_type = await self.integration.resolve_filer_identifier(appliance)
-            if not serial_number:
-                return self.format_error(f"Unable to resolve appliance identifier '{appliance}'")
-
-            response = await self.api_client.get_metric(
-                serial_number=serial_number,
-                metric=self.metric_key,
-                period=period,
-                panel_width=panel_width,
-                bin_size=bin_size,
-                timezone_offset_minutes=tz_offset,
-            )
-
-            if isinstance(response, dict) and response.get("error"):
-                error_msg = f"Portal telemetry error: {response['error']}"
-                if response.get("details"):
-                    error_msg += f" - Details: {response['details']}"
-                return self.format_error(error_msg)
-
-            output = self._format_response(
-                entity_label=f"Appliance {serial_number} (matched by {match_type})",
-                context={
-                    "period": period,
-                    "panel_width": panel_width,
-                    "bin_size": bin_size,
-                },
-                payload=response,
-                include_raw=include_raw,
-            )
-
-            return [TextContent(type="text", text=output)]
-
-        except Exception as exc:
-            logger.error(f"Appliance telemetry tool failure: {exc}")
-            import traceback
-
-            traceback.print_exc()
-            return self.format_error(f"Unexpected error: {exc}")
-
-    def _format_response(
-        self,
-        entity_label: str,
-        context: Dict[str, Any],
-        payload: Dict[str, Any],
-        include_raw: bool,
-    ) -> str:
-        config = self.metric_config
-        header = (
-            f"📡 PORTAL OPS IQ TELEMETRY — {config['display_name']}\n"
-            f"{config['description']}\n\n"
-        )
-
-        sections = [header]
-        sections.append(f"Entity: {entity_label}")
-        sections.append(f"Period: {context.get('period')}")
-        if context.get("panel_width"):
-            sections.append(f"Panel Width: {context['panel_width']} px")
-        if context.get("bin_size"):
-            sections.append(f"Bin Size: {context['bin_size']} s")
-
-        sections.append("")
-
-        if self.metric_key == "appliance_health_score":
-            sections.append(self._format_health_score(payload))
-        else:
-            records = _extract_primary_records(payload)
-            sections.append(_summarize_records(records))
-            metadata_summary = _format_metadata(payload.get("metadata"))
-            if metadata_summary:
-                sections.append("\nMetadata\n" + metadata_summary)
-
-        if include_raw:
-            sections.append("\nRaw Preview (truncated)")
-            sections.append(_raw_preview(payload))
-
-        return "\n".join(section for section in sections if section)
-
-    def _format_health_score(self, payload: Dict[str, Any]) -> str:
-        parts = ["=== Health Score Summary ==="]
-        score = payload.get("health_score", "Unknown")
-        appliance_name = payload.get("appliance_name") or payload.get("serial_number")
-        parts.append(f"Health Score: {score}")
-        if appliance_name:
-            parts.append(f"Reported Appliance: {appliance_name}")
-
-        description = payload.get("description", {})
-        if description:
-            label = description.get("label") or description.get("title")
-            text = description.get("message") or description.get("text")
-            if label:
-                parts.append(f"Status: {label}")
-            if text:
-                parts.append(f"Summary: {text}")
-
-        stats = payload.get("statistics", {})
-        if stats:
-            stat_lines = [f"{k}: {v}" for k, v in stats.items() if v is not None]
-            if stat_lines:
-                parts.append("\nStatistics\n" + "\n".join(stat_lines[:8]))
-
-        anomaly = payload.get("anomaly_details")
-        if anomaly:
-            parts.append("\nAnomaly Details\n" + json.dumps(anomaly, indent=2))
-
-        return "\n".join(parts)
-
-
-class PortalVolumeTelemetryTool(BaseTool):
-    """Tool for querying a single Portal volume telemetry metric."""
+class PortalVolumeTelemetryTool(BaseVolumeTelemetryTool):
+    """Tool for querying a single Portal volume telemetry metric.
+    
+    Unlike other volume telemetry tools, this one allows serial_numbers override
+    which can bypass volume resolution for serial lookup.
+    """
 
     def __init__(
         self,
@@ -340,14 +138,16 @@ class PortalVolumeTelemetryTool(BaseTool):
             f"[TELEMETRY] Portal Ops IQ volume metric — {config['display_name']}. "
             f"{config['description']} Automatically resolves volume names to GUIDs and fetches connected appliance serials."
         )
+        # Pass api_client as protection_client to satisfy base class
         super().__init__(
             name=f"portal_volume_{metric_key}",
             description=description,
+            integration_helper=integration_helper,
+            protection_client=api_client,
         )
         self.metric_key = metric_key
         self.metric_config = config
         self.api_client = api_client
-        self.integration = integration_helper
 
     def get_schema(self) -> Dict[str, Any]:
         return {
@@ -388,68 +188,60 @@ class PortalVolumeTelemetryTool(BaseTool):
             "additionalProperties": False,
         }
 
-    async def execute(self, arguments: Dict[str, Any]) -> List[TextContent]:
-        try:
-            volume_identifier = arguments.get("volume", "").strip()
-            period = arguments.get("period", "PT3H")
-            chart_width = arguments.get("chart_width")
-            smart_sampling = arguments.get("smart_sampling", True)
-            override_serials = arguments.get("serial_numbers") or []
-            include_raw = arguments.get("include_raw", False)
+    async def _do_execute(self, arguments: Dict[str, Any]) -> List[TextContent]:
+        volume_identifier = arguments.get("volume", "").strip()
+        period = arguments.get("period", "PT3H")
+        chart_width = arguments.get("chart_width")
+        smart_sampling = arguments.get("smart_sampling", True)
+        override_serials = arguments.get("serial_numbers") or []
+        include_raw = arguments.get("include_raw", False)
 
-            if not volume_identifier:
-                return self.format_error("Volume name or GUID is required")
+        if not volume_identifier:
+            return self.format_error("Volume name or GUID is required")
 
-            volume_guid, identifier_type = await self.integration.resolve_volume_identifier(volume_identifier)
-            if not volume_guid:
-                return self.format_error(f"Unable to resolve volume '{volume_identifier}'")
+        # Use base class for volume resolution
+        volume_guid, resolved_serials = await self._resolve_volume(volume_identifier)
 
-            if override_serials:
-                serials = [s.strip() for s in override_serials if s.strip()]
-            else:
-                serials = await self.integration.get_filer_serials_for_volume(volume_guid)
+        # Allow serial override
+        if override_serials:
+            serials = [s.strip() for s in override_serials if s.strip()]
+        else:
+            serials = resolved_serials
 
-            if not serials:
-                return self.format_error(
-                    "No filer serial numbers available for this volume. Provide serial_numbers explicitly if needed."
-                )
-
-            response = await self.api_client.get_metric(
-                volume_guid=volume_guid,
-                metric=self.metric_key,
-                serial_numbers=serials,
-                period=period,
-                chart_width=chart_width,
-                smart_sampling=smart_sampling,
+        if not serials:
+            return self.format_error(
+                "No filer serial numbers available for this volume. Provide serial_numbers explicitly if needed."
             )
 
-            if isinstance(response, dict) and response.get("error"):
-                error_msg = f"Portal telemetry error: {response['error']}"
-                if response.get("details"):
-                    error_msg += f" - Details: {response['details']}"
-                return self.format_error(error_msg)
+        response = await self.api_client.get_metric(
+            volume_guid=volume_guid,
+            metric=self.metric_key,
+            serial_numbers=serials,
+            period=period,
+            chart_width=chart_width,
+            smart_sampling=smart_sampling,
+        )
 
-            output = self._format_response(
-                volume_identifier=volume_identifier,
-                volume_guid=volume_guid,
-                serials=serials,
-                context={
-                    "period": period,
-                    "chart_width": chart_width,
-                    "smart_sampling": smart_sampling,
-                },
-                payload=response,
-                include_raw=include_raw,
-            )
+        if isinstance(response, dict) and response.get("error"):
+            error_msg = f"Portal telemetry error: {response['error']}"
+            if response.get("details"):
+                error_msg += f" - Details: {response['details']}"
+            return self.format_error(error_msg)
 
-            return [TextContent(type="text", text=output)]
+        output = self._format_response(
+            volume_identifier=volume_identifier,
+            volume_guid=volume_guid,
+            serials=serials,
+            context={
+                "period": period,
+                "chart_width": chart_width,
+                "smart_sampling": smart_sampling,
+            },
+            payload=response,
+            include_raw=include_raw,
+        )
 
-        except Exception as exc:
-            logger.error(f"Volume telemetry tool failure: {exc}")
-            import traceback
-
-            traceback.print_exc()
-            return self.format_error(f"Unexpected error: {exc}")
+        return [TextContent(type="text", text=output)]
 
     def _format_response(
         self,
@@ -1092,127 +884,6 @@ class GetVolumeLatestVersionTool(BaseVolumeTelemetryTool):
         return [TextContent(type="text", text=output)]
 
 
-class CheckApplianceSyncStatusTool(BaseVolumeTelemetryTool):
-    """Tool to check if an appliance is up-to-date with latest snapshot."""
-    
-    def __init__(
-        self,
-        protection_client: PortalVolumeTelemetryAPIClient,
-        propagation_client: PortalVolumeTelemetryAPIClient,
-        integration_helper: NMCPortalIntegration
-    ):
-        super().__init__(
-            name="check_appliance_sync_status",
-            description="[TELEMETRY - SYNC STATUS] Check if a specific appliance is up-to-date with the latest volume snapshot. Shows sync lag and detects stale appliances. USE FOR: 'Is appliance X up to date?', 'Check sync status for appliance', 'Is appliance behind?', 'Show appliance sync lag', 'Latest version on appliance X?'. Detects: appliances >1hr behind (lagging), >3hr behind (critical issue). Shows both latest snapshot created and latest sync completed.",
-            integration_helper=integration_helper,
-            protection_client=protection_client,
-            propagation_client=propagation_client,
-        )
-    
-    def get_schema(self) -> Dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "volume": VOLUME_PROPERTY,
-                "appliance": APPLIANCE_PROPERTY,
-                "period": PERIOD_PROPERTY_6H,
-            },
-            "required": ["volume", "appliance"]
-        }
-
-    async def _do_execute(self, arguments: Dict[str, Any]) -> List[TextContent]:
-        volume_id = arguments.get("volume", "").strip()
-        appliance_id = arguments.get("appliance", "").strip()
-        
-        if not volume_id or not appliance_id:
-            return self.format_error("Both volume and appliance required")
-        
-        period = arguments.get("period", "PT6H")
-        volume_guid, serials = await self._resolve_volume(volume_id)
-        
-        protection = await self.protection_client.get_volume_data_protection_analysis(
-            volume_guid, serials, period
-        )
-        
-        if not protection.complete_snapshots:
-            return [TextContent(type="text", text=f"No snapshot data for {volume_id}")]
-        
-        propagation = await self.propagation_client.get_volume_data_propagation_analysis(
-            volume_guid, serials, period
-        )
-        
-        output = self._format_single_appliance_status(
-            volume_id, appliance_id, protection, propagation
-        )
-        return [TextContent(type="text", text=output)]
-    
-    def _format_single_appliance_status(
-        self, volume_id: str, appliance_id: str, protection, propagation
-    ) -> str:
-        """Format sync status for a single appliance."""
-        latest_overall = protection.latest_snapshot
-        status = _calculate_appliance_sync_status(
-            appliance_id, latest_overall, protection, propagation
-        )
-        
-        out = (
-            f"🔍 APPLIANCE SYNC STATUS\n\n"
-            f"=== APPLIANCE ===\n"
-            f"Appliance: {appliance_id}\n"
-            f"Volume: {volume_id}\n"
-            f"Status: {status['status_icon']} {status['status_text']}\n\n"
-            f"=== LATEST SNAPSHOT (VOLUME-WIDE) ===\n"
-            f"Version: {latest_overall.volume_version}\n"
-            f"Created By: {latest_overall.appliance}\n"
-            f"Completed: {latest_overall.timestamp_str}\n\n"
-            f"=== THIS APPLIANCE'S LATEST VERSION ===\n"
-            f"Version: {status['version'] if status['version'] else 'No data'}\n"
-            f"Source: {status['source'].upper()}\n"
-        )
-        
-        if status['time']:
-            out += f"Last Updated: {status['time'].strftime('%Y-%m-%d %H:%M:%S')}\n"
-        
-        if status['lag_versions'] > 0:
-            out += (
-                f"\n=== ⚠️ SYNC LAG DETECTED ===\n"
-                f"Versions Behind: {status['lag_versions']}\n"
-            )
-            if status['lag_time']:
-                lag_hours = status['lag_time'].total_seconds() / 3600
-                lag_minutes = status['lag_time'].total_seconds() / 60
-                
-                out += f"Time Behind: {lag_hours:.1f} hours ({lag_minutes:.0f} minutes)\n"
-                
-                if lag_hours > 3:
-                    out += "\n🚨 CRITICAL: Appliance hasn't synced in over 3 hours - investigate immediately!\n"
-                    out += "   Possible issues: Network connectivity, sync disabled, appliance offline\n"
-                elif lag_hours > 1:
-                    out += "\n⚠️ WARNING: Appliance hasn't synced in over 1 hour\n"
-                    out += "   Monitor closely - may indicate sync performance issues\n"
-                else:
-                    out += "\nℹ️ Minor lag - within normal sync schedule\n"
-        else:
-            out += "\n✅ Appliance is current with latest snapshot\n"
-        
-        # Show snapshot vs sync activity
-        if status.get('snapshot_count', 0) > 0:
-            out += f"\nSnapshot Activity: {status['snapshot_count']} snapshots created by this appliance\n"
-            if status.get('last_snapshot'):
-                out += f"  Last created: v{status['last_snapshot']['version']} at {status['last_snapshot']['time']}\n"
-        
-        if status.get('sync_count', 0) > 0:
-            out += f"\nSync Activity: {status['sync_count']} syncs completed by this appliance\n"
-            if status.get('last_sync'):
-                out += f"  Last synced: v{status['last_sync']['version']} at {status['last_sync']['time']}\n"
-                out += f"  Propagation time: {status['last_sync']['duration']}\n"
-        
-        if status.get('snapshot_count', 0) == 0 and status.get('sync_count', 0) == 0:
-            out += "\n⚠️ No snapshot or sync activity found for this appliance in the selected period\n"
-        
-        return out
-
-
 class GetAllAppliancesSyncStatusTool(BaseVolumeTelemetryTool):
     """Tool to check sync status for all appliances connected to a volume."""
     
@@ -1336,6 +1007,132 @@ class GetAllAppliancesSyncStatusTool(BaseVolumeTelemetryTool):
         return out
 
 
+class CheckApplianceSyncStatusTool(BaseVolumeTelemetryTool):
+    """Tool to check if an appliance is up-to-date with latest snapshot."""
+    
+    def __init__(
+        self,
+        protection_client: PortalVolumeTelemetryAPIClient,
+        propagation_client: PortalVolumeTelemetryAPIClient,
+        integration_helper: NMCPortalIntegration
+    ):
+        super().__init__(
+            name="check_appliance_sync_status",
+            description="[TELEMETRY - SYNC STATUS] Check if a specific appliance is up-to-date with the latest volume snapshot. Shows sync lag and detects stale appliances. USE FOR: 'Is appliance X up to date?', 'Check sync status for appliance', 'Is appliance behind?', 'Show appliance sync lag', 'Latest version on appliance X?'. Detects: appliances >1hr behind (lagging), >3hr behind (critical issue). Shows both latest snapshot created and latest sync completed.",
+            integration_helper=integration_helper,
+            protection_client=protection_client,
+            propagation_client=propagation_client,
+        )
+    
+    def get_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "volume": VOLUME_PROPERTY,
+                "appliance": APPLIANCE_PROPERTY,
+                "period": PERIOD_PROPERTY_6H,
+            },
+            "required": ["volume", "appliance"]
+        }
+
+    async def _do_execute(self, arguments: Dict[str, Any]) -> List[TextContent]:
+        volume_id = arguments.get("volume", "").strip()
+        appliance_id = arguments.get("appliance", "").strip()
+        
+        if not volume_id or not appliance_id:
+            return self.format_error("Both volume and appliance required")
+        
+        period = arguments.get("period", "PT6H")
+        volume_guid, serials = await self._resolve_volume(volume_id)
+        
+        protection = await self.protection_client.get_volume_data_protection_analysis(
+            volume_guid, serials, period
+        )
+        
+        if not protection.complete_snapshots:
+            return [TextContent(type="text", text=f"No snapshot data for {volume_id}")]
+        
+        propagation = await self.propagation_client.get_volume_data_propagation_analysis(
+            volume_guid, serials, period
+        )
+        
+        output = self._format_single_appliance_status(
+            volume_id, appliance_id, protection, propagation
+        )
+        return [TextContent(type="text", text=output)]
+    
+    def _format_single_appliance_status(
+        self, volume_id: str, appliance_id: str, protection, propagation
+    ) -> str:
+        """Format sync status for a single appliance."""
+        latest_overall = protection.latest_snapshot
+        status = _calculate_appliance_sync_status(
+            appliance_id, latest_overall, protection, propagation
+        )
+        
+        out = (
+            f"🔍 APPLIANCE SYNC STATUS\n\n"
+            f"=== APPLIANCE ===\n"
+            f"Appliance: {appliance_id}\n"
+            f"Volume: {volume_id}\n"
+            f"Status: {status['status_icon']} {status['status_text']}\n\n"
+            f"=== LATEST SNAPSHOT (VOLUME-WIDE) ===\n"
+            f"Version: {latest_overall.volume_version}\n"
+            f"Created By: {latest_overall.appliance}\n"
+            f"Completed: {latest_overall.timestamp_str}\n\n"
+            f"=== THIS APPLIANCE'S LATEST VERSION ===\n"
+            f"Version: {status['version'] if status['version'] else 'No data'}\n"
+            f"Source: {status['source'].upper()}\n"
+        )
+        
+        if status['time']:
+            out += f"Last Updated: {status['time'].strftime('%Y-%m-%d %H:%M:%S')}\n"
+        
+        if status['lag_versions'] > 0:
+            out += (
+                f"\n=== ⚠️ SYNC LAG DETECTED ===\n"
+                f"Versions Behind: {status['lag_versions']}\n"
+            )
+            if status['lag_time']:
+                lag_hours = status['lag_time'].total_seconds() / 3600
+                lag_minutes = status['lag_time'].total_seconds() / 60
+                
+                out += f"Time Behind: {lag_hours:.1f} hours ({lag_minutes:.0f} minutes)\n"
+                
+                if lag_hours > 3:
+                    out += "\n🚨 CRITICAL: Appliance hasn't synced in over 3 hours - investigate immediately!\n"
+                    out += "   Possible issues: Network connectivity, sync disabled, appliance offline\n"
+                elif lag_hours > 1:
+                    out += "\n⚠️ WARNING: Appliance hasn't synced in over 1 hour\n"
+                    out += "   Monitor closely - may indicate sync performance issues\n"
+                else:
+                    out += "\nℹ️ Minor lag - within normal sync schedule\n"
+        else:
+            out += "\n✅ Appliance is current with latest snapshot\n"
+        
+        # Show snapshot vs sync activity
+        if status.get('snapshot_count', 0) > 0:
+            out += f"\nSnapshot Activity: {status['snapshot_count']} snapshots created by this appliance\n"
+            if status.get('last_snapshot'):
+                out += f"  Last created: v{status['last_snapshot']['version']} at {status['last_snapshot']['time']}\n"
+        
+        if status.get('sync_count', 0) > 0:
+            out += f"\nSync Activity: {status['sync_count']} syncs completed by this appliance\n"
+            if status.get('last_sync'):
+                out += f"  Last synced: v{status['last_sync']['version']} at {status['last_sync']['time']}\n"
+                out += f"  Propagation time: {status['last_sync']['duration']}\n"
+        
+        if status.get('snapshot_count', 0) == 0 and status.get('sync_count', 0) == 0:
+            out += "\n⚠️ No snapshot or sync activity found for this appliance in the selected period\n"
+        
+        return out
+
+
+# ============================================================================
+# SHARED HELPER FUNCTIONS
+# ============================================================================
+
+
 def _calculate_appliance_sync_status(
     appliance_id: str,
     latest_overall,
@@ -1441,135 +1238,3 @@ def _calculate_appliance_sync_status(
         "last_snapshot": last_snapshot,
         "last_sync": last_sync,
     }
-
-
-# ============================================================================
-# PRIVATE HELPER FUNCTIONS
-# ============================================================================
-
-
-def _extract_primary_records(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Extract primary data records from a telemetry payload."""
-    if not isinstance(payload, dict):
-        return []
-    if isinstance(payload.get("items"), list):
-        return payload["items"]
-    if isinstance(payload.get("records"), list):
-        return payload["records"]
-
-    combined: List[Dict[str, Any]] = []
-    for key in ("data_events", "metadata_events", "events"):
-        entries = payload.get(key)
-        if isinstance(entries, list):
-            combined.extend([entry for entry in entries if isinstance(entry, dict)])
-    return combined
-
-
-def _summarize_records(records: List[Dict[str, Any]]) -> str:
-    """Generate a summary of telemetry records with statistics."""
-    if not records:
-        return "No telemetry records returned."
-
-    timestamps: List[Any] = []
-    field_samples: Dict[str, List[float]] = {}
-
-    for record in records:
-        timestamp = _extract_timestamp(record)
-        if timestamp is not None:
-            timestamps.append(timestamp)
-        for key, value in record.items():
-            if key.lower() in _TIME_FIELDS:
-                continue
-            numeric_value = _coerce_float(value)
-            if numeric_value is None:
-                continue
-            field_samples.setdefault(key, []).append(numeric_value)
-
-    lines: List[str] = [f"Records: {len(records)}"]
-
-    if timestamps:
-        try:
-            start = _format_timestamp(min(timestamps))
-            end = _format_timestamp(max(timestamps))
-            lines.append(f"Window: {start} → {end}")
-        except Exception:
-            pass
-
-    shown = 0
-    for field, values in field_samples.items():
-        if not values:
-            continue
-        try:
-            avg_val = mean(values)
-        except StatisticsError:
-            avg_val = values[0]
-        try:
-            line = (
-                f"{field}: avg {avg_val:,.2f} | min {min(values):,.2f} | max {max(values):,.2f}"
-            )
-        except Exception:
-            line = f"{field}: avg {avg_val}"
-        lines.append(line)
-        shown += 1
-        if shown >= 6:
-            break
-
-    return "\n".join(lines)
-
-
-def _format_metadata(metadata: Any) -> str:
-    """Format metadata dict as readable string."""
-    if not isinstance(metadata, dict) or not metadata:
-        return "No metadata provided."
-    lines = []
-    for idx, (key, value) in enumerate(metadata.items()):
-        if idx >= 8:
-            lines.append("… (truncated)")
-            break
-        lines.append(f"{key}: {value}")
-    return "\n".join(lines)
-
-
-def _raw_preview(payload: Any, limit_chars: int = 1800) -> str:
-    """Generate a truncated JSON preview of the payload."""
-    try:
-        raw = json.dumps(payload, indent=2, default=str)
-    except TypeError:
-        raw = str(payload)
-    if len(raw) > limit_chars:
-        raw = raw[:limit_chars] + "\n… (truncated)"
-    return raw
-
-
-def _extract_timestamp(record: Dict[str, Any]) -> Optional[Any]:
-    """Extract timestamp from a record using known time field names."""
-    for key in _TIME_FIELDS:
-        if key in record and record[key] is not None:
-            return record[key]
-    return None
-
-
-def _coerce_float(value: Any) -> Optional[float]:
-    """Coerce a value to float if possible."""
-    if isinstance(value, bool):
-        return float(value)
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
-        try:
-            return float(value)
-        except ValueError:
-            return None
-    return None
-
-
-def _format_timestamp(value: Any) -> str:
-    """Format a timestamp value as ISO 8601 string."""
-    if value is None:
-        return "Unknown"
-    if isinstance(value, (int, float)):
-        seconds = float(value)
-        if seconds > 1_000_000_000_000:  # assume ms
-            seconds = seconds / 1000.0
-        return datetime.fromtimestamp(seconds, tz=timezone.utc).isoformat()
-    return str(value)

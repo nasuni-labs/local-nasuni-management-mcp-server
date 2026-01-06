@@ -186,7 +186,7 @@ class ToolRegistry:
         print("✅ Registered 3 Portal authentication tools", file=sys.stderr)
     
     def register_portal_protection_metrics_tools(self, portal_client, integration_helper):
-        from tools.portal_telemetry_tools import (
+        from tools.portal_telemetry import (
             GetVolumeProtectionMetricsTool,
             CompareVolumeProtectionMetricsTool,
         )
@@ -199,7 +199,7 @@ class ToolRegistry:
     
     def register_portal_propagation_metrics_tools(self, propagation_client, integration_helper):
         """Register Portal data propagation (sync timing) tools."""
-        from tools.portal_telemetry_tools import GetVolumePropagationMetricsTool
+        from tools.portal_telemetry import GetVolumePropagationMetricsTool
         
         self.register_tool(GetVolumePropagationMetricsTool(propagation_client, integration_helper))
         
@@ -207,7 +207,7 @@ class ToolRegistry:
     
     def register_portal_combined_metrics_tools(self, protection_client, propagation_client, integration_helper):
         """Register Portal combined (end-to-end) and sync status tools."""
-        from tools.portal_telemetry_tools import (
+        from tools.portal_telemetry import (
             GetEndToEndProtectionTimingTool,
             GetVolumeLatestVersionTool,
             CheckApplianceSyncStatusTool,
@@ -240,7 +240,7 @@ class ToolRegistry:
         print(f"🔍 DEBUG: volume_client={volume_client}", file=sys.stderr)
         print(f"🔍 DEBUG: integration_helper={integration_helper}", file=sys.stderr)
         
-        from tools.portal_telemetry_tools import (
+        from tools.portal_telemetry import (
             PortalApplianceTelemetryTool,
             PortalVolumeTelemetryTool,
         )
