@@ -31,6 +31,12 @@ APPLIANCE_TELEMETRY_CONFIG: Dict[str, Dict[str, Any]] = {
         "description": "Read/write latency for cache disks (ms).",
         "request_type": "standard",
     },
+    "cache_disk_io_latency": {
+        "path": "cache_disk_io_latency",
+        "display_name": "Cache Disk IO Latency",
+        "description": "Read/write IO latency for cache disks (ms).",
+        "request_type": "standard",
+    },
     "cache_disk_iops": {
         "path": "cache_disk_iops",
         "display_name": "Cache Disk IOPS",

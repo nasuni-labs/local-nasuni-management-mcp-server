@@ -255,7 +255,12 @@ class ToolRegistry:
         print("📦 Registering Portal telemetry tools...", file=sys.stderr)
         count = 0
         
+        # Metrics to skip (replaced by smart tool)
+        SKIP_APPLIANCE_METRICS = {"memory_utilization", "memory_utilization_details"}
+        
         for metric_key in APPLIANCE_TELEMETRY_CONFIG.keys():
+            if metric_key in SKIP_APPLIANCE_METRICS:
+                continue  # Skip - handled by smart memory tool
             try:
                 tool = PortalApplianceTelemetryTool(metric_key, appliance_client, integration_helper)
                 self.register_tool(tool)
@@ -274,6 +279,11 @@ class ToolRegistry:
                 print(f"  ❌ Failed to register volume metric '{metric_key}': {e}", file=sys.stderr)
                 import traceback
                 traceback.print_exc(file=sys.stderr)
+
+        # Register the smart memory tool (replaces memory_utilization and memory_utilization_details)
+        from tools.portal_telemetry.appliance_tools import register_smart_memory_tool
+        register_smart_memory_tool(self, appliance_client, integration_helper)
+        count += 1
 
         print(f"✅ Registered {count} Portal telemetry tools", file=sys.stderr)
 
