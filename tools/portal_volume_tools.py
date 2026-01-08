@@ -97,7 +97,7 @@ class PortalGetVolumeTool(BaseTool):
         api_client: PortalVolumesAPIClient,
     ):
         description = (
-            "[PORTAL - PREFERRED] Get detailed information for a specific volume. "
+            "Get detailed information for a specific volume. "
             "Returns cloud provider, edge connections (master and connected edges), "
             "capacity usage, GFL/GFA status, lock server, and share features. "
             "Requires the volume ID (GUID format)."

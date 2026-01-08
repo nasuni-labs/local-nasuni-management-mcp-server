@@ -82,13 +82,13 @@ APPLIANCE_TELEMETRY_CONFIG: Dict[str, Dict[str, Any]] = {
     "cpu_utilization": {
         "path": "cpu_utilization",
         "display_name": "CPU Utilization",
-        "description": "CPU usage percent across the appliance.",
+        "description": "[PORTAL - PREFERRED FOR CPU METRICS] CPU usage percent across the appliance. Use this instead of NMC health tools for CPU status.",
         "request_type": "standard",
     },
     "memory_utilization": {
         "path": "memory_utilization",
         "display_name": "Memory Utilization",
-        "description": "Overall memory consumption and trends.",
+        "description": "[PORTAL - PREFERRED FOR MEMORY METRICS] Overall memory consumption and trends. Use this instead of NMC health tools for memory status.",
         "request_type": "standard",
     },
     "memory_utilization_details": {
@@ -130,7 +130,7 @@ APPLIANCE_TELEMETRY_CONFIG: Dict[str, Dict[str, Any]] = {
     "appliance_health_score": {
         "path": "appliance_health_score",
         "display_name": "Appliance Health Score",
-        "description": "Composite health score with anomaly context.",
+        "description": "[PORTAL - PREFERRED FOR HEALTH STATUS] Composite health score with anomaly context. Use this instead of NMC filer health tools for real-time appliance health.",
         "request_type": "health",
     },
 }
@@ -150,7 +150,7 @@ VOLUME_TELEMETRY_CONFIG: Dict[str, Dict[str, Any]] = {
     "snapshot_timeline": {
         "path": "snapshot_timeline",
         "display_name": "Snapshot Timeline",
-        "description": "Data/metadata push phases for each snapshot.",
+        "description": "[PORTAL - PREFERRED FOR SNAPSHOT STATUS] Data/metadata push phases for each snapshot. Use this instead of NMC snapshot health tools.",
     },
     "snapshot_content": {
         "path": "snapshot_content",
@@ -160,12 +160,12 @@ VOLUME_TELEMETRY_CONFIG: Dict[str, Dict[str, Any]] = {
     "oldest_unprotected_data": {
         "path": "oldest_unprotected_data",
         "display_name": "Oldest Unprotected Data",
-        "description": "OUD trend for the selected volume.",
+        "description": "[PORTAL - PREFERRED FOR PROTECTION STATUS] OUD trend for the selected volume. Use this instead of NMC protection summary tools.",
     },
     "snapshot_details": {
         "path": "snapshot_details",
         "display_name": "Snapshot Details",
-        "description": "Detailed per-snapshot timing + metadata.",
+        "description": "[PORTAL - PREFERRED FOR SNAPSHOT INFO] Detailed per-snapshot timing + metadata. Use this instead of NMC snapshot tools.",
     },
     "snapshot_propagation_by_appliance": {
         "path": "snapshot_propagation_by_appliance",

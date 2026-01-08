@@ -186,7 +186,7 @@ class GetSnapshotHealthReportTool(BaseTool):
     def __init__(self, api_client: VolumeFilerDetailsAPIClient):
         super().__init__(
             name="get_snapshot_health_report",
-            description="Generate a comprehensive health report for snapshot operations across all volumes. Identifies stale snapshots, configuration issues, and volumes that have never been snapshotted."
+            description="[NMC - PREFER USE OF portal_volume_snapshot_timeline or portal_volume_snapshot_details INSTEAD] Generate snapshot health report from NMC. For real-time snapshot metrics, use Portal telemetry tools first."
         )
         self.api_client = api_client
     
@@ -223,7 +223,7 @@ class GetSyncConfigurationReportTool(BaseTool):
     def __init__(self, api_client: VolumeFilerDetailsAPIClient):
         super().__init__(
             name="get_sync_configuration_report",
-            description="Generate a report on sync configurations across all volumes. Shows sync frequencies, auto-cache settings, and schedule patterns."
+            description="[NMC - PREFER USE OF get_volume_propagation_metrics INSTEAD] Generate sync configuration report from NMC. For real-time sync timing, use Portal tools first."
         )
         self.api_client = api_client
     
@@ -297,7 +297,7 @@ class GetDataProtectionSummaryTool(BaseTool):
     def __init__(self, api_client: VolumeFilerDetailsAPIClient):
         super().__init__(
             name="get_data_protection_summary",
-            description="Get a comprehensive summary of data protection status across all volumes. Shows protection percentages, at-risk data, and identifies high-risk connections."
+            description="[NMC - PREFER USE OF get_volume_protection_metrics or portal_volume_oldest_unprotected_data INSTEAD] Get data protection summary from NMC. For real-time protection metrics, use Portal tools first."
         )
         self.api_client = api_client
     
@@ -806,7 +806,7 @@ class FindUnprotectedVolumesTool(BaseTool):
     def __init__(self, api_client: VolumeFilerDetailsAPIClient, volumes_client: VolumesAPIClient):
         super().__init__(
             name="find_unprotected_volumes",
-            description="Find volumes with unprotected data across all filer connections. Identifies at-risk data and provides protection metrics."
+            description="[NMC - PREFER USE OF portal_volume_oldest_unprotected_data INSTEAD] Find unprotected volumes from NMC. For real-time unprotected data metrics, use Portal telemetry tools first."
         )
         self.api_client = api_client
         self.volumes_client = volumes_client

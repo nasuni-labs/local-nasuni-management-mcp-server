@@ -14,7 +14,7 @@ class ListFilerHealthTool(BaseTool):
     def __init__(self, api_client: FilerHealthAPIClient):
         super().__init__(
             name="list_filer_health",
-            description="Returns comprehensive health status for all filer appliances including system components (CPU, memory, disk, network), file services (NFS, SMB), and advanced features (File IQ, Cyber Resilience, File Accelerator, AGFL). Use this for infrastructure health monitoring and troubleshooting."
+            description="[NMC - PREFER USE OF portal_appliance_appliance_health_score INSTEAD] Returns health status for all filers from NMC API. For individual appliance health, use portal_appliance_appliance_health_score first as it provides more accurate real-time health scoring from Portal."
         )
         self.api_client = api_client
     
@@ -113,7 +113,7 @@ class GetFilerHealthBySerialTool(BaseTool):
     def __init__(self, api_client: FilerHealthAPIClient):
         super().__init__(
             name="get_filer_health_by_serial",
-            description="Get detailed health status for a specific filer appliance by serial number. Shows all component statuses and health metrics for targeted troubleshooting."
+            description="[NMC - PREFER USE OF portal_appliance_appliance_health_score INSTEAD] Get health status for a specific filer by serial number from NMC. Use portal_appliance_appliance_health_score first for real-time health scoring from Portal."
         )
         self.api_client = api_client
     
@@ -361,7 +361,7 @@ class GetFilerHealthStatsTool(BaseTool):
     def __init__(self, api_client: FilerHealthAPIClient):
         super().__init__(
             name="get_filer_health_stats",
-            description="Get comprehensive statistics about filer health across the infrastructure, including component-level analysis, health scores, and problem identification."
+            description="[NMC - PREFER USE OF portal_appliance_appliance_health_score INSTEAD] Get aggregate health statistics from NMC. Use portal_appliance_appliance_health_score first for real-time health scoring from Portal."
         )
         self.api_client = api_client
     
@@ -447,7 +447,7 @@ class GetUnhealthyFilersTool(BaseTool):
     def __init__(self, api_client: FilerHealthAPIClient):
         super().__init__(
             name="get_unhealthy_filers",
-            description="Get all filer appliances that have unhealthy components requiring immediate attention. Use this for troubleshooting and identifying critical infrastructure issues."
+            description="[NMC - PREFER USE OF portal_appliance_appliance_health_score INSTEAD] Get filers with health issues from NMC. Use portal_appliance_appliance_health_score first for real-time health scoring from Portal."
         )
         self.api_client = api_client
     
@@ -519,7 +519,7 @@ class GetCriticalHealthIssuesTool(BaseTool):
     def __init__(self, api_client: FilerHealthAPIClient):
         super().__init__(
             name="get_critical_health_issues",
-            description="Identify and prioritize critical health issues across all filer appliances. Provides actionable insights for infrastructure maintenance and troubleshooting."
+            description="[NMC - PREFER USE OF portal_appliance_appliance_health_score INSTEAD] Identify critical health issues from NMC. Use portal_appliance_appliance_health_score first for real-time health scoring from Portal."
         )
         self.api_client = api_client
     

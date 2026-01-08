@@ -304,10 +304,10 @@ class GetVolumeProtectionMetricsTool(BaseVolumeTelemetryTool):
         super().__init__(
             name="get_volume_protection_metrics",
             description=(
-                "[TELEMETRY - DATA PROTECTION] Get comprehensive data protection metrics from Portal Ops IQ. "
-                "Provides timing and performance data NOT available from NMC. USE THIS TO ANSWER: (1) Latest volume/snapshot version, (2) Which appliance created latest snapshot, "
-                "(3) Average data protection time (how long files remain unprotected), (4) Protection anomalies (worst cases of unprotected files), (5) Oldest Unprotected Data (OUD) age, "
-                "(6) Snapshot phase timing (data & metadata duration), (7) Files and directories protected per snapshot, (8) Most active appliance, (9) Protection performance by appliance. "
+                "[PORTAL - PREFERRED FOR PROTECTION STATUS] Get comprehensive data protection metrics from Portal Ops IQ. "
+                "USE THIS INSTEAD OF NMC protection/unprotected tools. "
+                "Provides real-time timing and performance data: latest snapshot version, protection anomalies, "
+                "OUD age, snapshot timing, files protected per snapshot, and protection performance by appliance. "
                 "Accepts volume name or GUID."
             ),
             integration_helper=integration_helper,
@@ -689,8 +689,8 @@ class GetVolumePropagationMetricsTool(BaseVolumeTelemetryTool):
         super().__init__(
             name="get_volume_propagation_metrics",
             description=(
-                "[TELEMETRY - DATA PROPAGATION] Get sync timing metrics from Portal Ops IQ. "
-                "Shows how long it takes for snapshots to propagate to connected appliances."
+                "[PORTAL - PREFERRED FOR SYNC STATUS] Get sync timing metrics from Portal Ops IQ. "
+                "USE THIS INSTEAD OF NMC sync tools. Shows real-time propagation timing to connected appliances."
             ),
             integration_helper=integration_helper,
             propagation_client=api_client,
