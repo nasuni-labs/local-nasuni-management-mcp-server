@@ -287,6 +287,31 @@ class ToolRegistry:
 
         print(f"✅ Registered {count} Portal telemetry tools", file=sys.stderr)
 
+    def register_portal_edge_tools(
+        self,
+        edges_client,
+        integration_helper,
+    ):
+        """Register Portal Edge tools for appliance hardware details."""
+        print("📦 Registering Portal Edge tools...", file=sys.stderr)
+        
+        from tools.portal_edge_tools import register_portal_edge_tools
+        register_portal_edge_tools(self, edges_client, integration_helper)
+        
+        print("✅ Registered Portal Edge tools", file=sys.stderr)
+
+    def register_portal_volume_tools(
+        self,
+        volumes_client,
+    ):
+        """Register Portal Volume tools for volume information."""
+        print("📦 Registering Portal Volume tools...", file=sys.stderr)
+        
+        from tools.portal_volume_tools import register_portal_volume_tools
+        register_portal_volume_tools(self, volumes_client)
+        
+        print("✅ Registered Portal Volume tools", file=sys.stderr)
+
 
     def get_tool_list(self) -> List[Tool]:
         """Get list of all registered tools for MCP."""

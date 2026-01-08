@@ -183,6 +183,31 @@ class MCPServer:
                             integration_helper,
                         )
 
+                        # Register Portal Edge tools (detailed hardware info)
+                        from api.portal_edges_api import PortalEdgesAPIClient
+                        portal_edges_client = PortalEdgesAPIClient(
+                            config.portal_config,
+                            portal_auth_client,
+                        )
+                        print("✅ Created Portal edges client", file=sys.stderr)
+                        
+                        self.tool_registry.register_portal_edge_tools(
+                            portal_edges_client,
+                            integration_helper,
+                        )
+
+                        # Register Portal Volume tools (volume information)
+                        from api.portal_volumes_api import PortalVolumesAPIClient
+                        portal_volumes_client = PortalVolumesAPIClient(
+                            config.portal_config,
+                            portal_auth_client,
+                        )
+                        print("✅ Created Portal volumes client", file=sys.stderr)
+                        
+                        self.tool_registry.register_portal_volume_tools(
+                            portal_volumes_client,
+                        )
+
                     except ImportError as e:
                         print(f"⚠️ Portal metrics import error: {e}", file=sys.stderr)
                         import traceback
