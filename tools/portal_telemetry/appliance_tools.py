@@ -436,3 +436,330 @@ def register_smart_memory_tool(
     registry.register_tool(tool)
     logger.info(f"Registered smart memory tool: {tool.name}")
 
+
+# ============================================================================
+# COMPREHENSIVE APPLIANCE ANALYSIS GUIDANCE TOOL
+# ============================================================================
+
+
+class ApplianceComprehensiveAnalysisGuideTool(BaseTool):
+    """Meta-tool that provides guidance for comprehensive appliance analysis.
+    
+    Instead of making expensive calls to all telemetry endpoints, this tool
+    returns instructions to the LLM on how to systematically analyze an appliance.
+    """
+
+    def __init__(self, integration_helper: NMCPortalIntegration):
+        description = (
+            "[PORTAL - ANALYSIS GUIDE] Get step-by-step instructions for comprehensive appliance health analysis. "
+            "Returns a systematic approach to analyze all telemetry metrics over 30 days, identify trends, "
+            "find issues, and report min/max/averages. USE THIS when user asks for full appliance analysis, "
+            "health report, or trend analysis. This tool provides guidance - it does NOT make expensive API calls."
+        )
+        super().__init__(
+            name="portal_appliance_comprehensive_analysis_guide",
+            description=description,
+        )
+        self.integration = integration_helper
+
+    def get_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "appliance": {
+                    "type": "string",
+                    "description": "Filer serial number or name to analyze",
+                },
+                "analysis_depth": {
+                    "type": "string",
+                    "enum": ["quick", "standard", "comprehensive"],
+                    "description": "Level of analysis: quick (core metrics only), standard (common issues), comprehensive (all metrics)",
+                    "default": "standard",
+                },
+            },
+            "required": ["appliance"],
+            "additionalProperties": False,
+        }
+
+    async def execute(self, arguments: Dict[str, Any]) -> List[TextContent]:
+        appliance = arguments.get("appliance", "").strip()
+        analysis_depth = arguments.get("analysis_depth", "standard")
+
+        if not appliance:
+            return self.format_error("Appliance identifier is required")
+
+        # Resolve the appliance to get serial number
+        serial_number, match_type = await self.integration.resolve_filer_identifier(appliance)
+        if not serial_number:
+            return self.format_error(f"Unable to resolve appliance identifier '{appliance}'")
+
+        guide = self._generate_analysis_guide(serial_number, match_type, analysis_depth)
+        return [TextContent(type="text", text=guide)]
+
+    def _generate_analysis_guide(self, serial_number: str, match_type: str, depth: str) -> str:
+        """Generate the analysis guide based on depth level."""
+        
+        guide = f"""📊 COMPREHENSIVE APPLIANCE ANALYSIS GUIDE
+{'=' * 60}
+
+Target Appliance: {serial_number} (matched by {match_type})
+Analysis Depth: {depth.upper()}
+Recommended Period: P30D (30 days) for trend analysis
+
+"""
+
+        if depth == "quick":
+            guide += self._quick_analysis_steps(serial_number)
+        elif depth == "standard":
+            guide += self._standard_analysis_steps(serial_number)
+        else:  # comprehensive
+            guide += self._comprehensive_analysis_steps(serial_number)
+
+        guide += self._analysis_tips()
+        
+        return guide
+
+    def _quick_analysis_steps(self, serial: str) -> str:
+        return f"""
+🚀 QUICK ANALYSIS (Core Health Check)
+{'─' * 40}
+
+Execute these steps IN ORDER:
+
+STEP 1: Quick Health Snapshot
+  Tool: portal_appliance_current_appliance_performance
+  Args: appliance="{serial}", period="PT1H"
+  Look for: CPU stress, memory pressure, I/O bottlenecks
+  
+STEP 2: If issues found, check CPU trend
+  Tool: portal_appliance_cpu_utilization
+  Args: appliance="{serial}", period="P7D"
+  Look for: Sustained >80% usage, sudden spikes
+  
+STEP 3: If memory issues, check memory trend
+  Tool: portal_appliance_memory_utilization
+  Args: appliance="{serial}", period="P7D"
+  Look for: Memory exhaustion trends, OOM risk
+
+ANALYSIS COMPLETE - Report findings with:
+- Current health status (healthy/warning/critical)
+- Any concerning trends identified
+- Recommended actions if issues found
+"""
+
+    def _standard_analysis_steps(self, serial: str) -> str:
+        return f"""
+📋 STANDARD ANALYSIS (Common Issues Detection)
+{'─' * 40}
+
+Execute these steps IN ORDER, stopping if critical issues found:
+
+PHASE 1: Initial Health Assessment
+──────────────────────────────────
+STEP 1: Quick health snapshot
+  Tool: portal_appliance_current_appliance_performance
+  Args: appliance="{serial}", period="PT3H"
+  Evaluate: Overall health state, immediate issues
+
+PHASE 2: Core Resource Analysis (30-day trends)
+───────────────────────────────────────────────
+STEP 2: CPU utilization trend
+  Tool: portal_appliance_cpu_utilization
+  Args: appliance="{serial}", period="P30D"
+  Report: Min, Max, Average, trend direction
+  Alert if: Avg >70%, Max >95%, or upward trend
+
+STEP 3: Memory utilization trend
+  Tool: portal_appliance_memory_utilization
+  Args: appliance="{serial}", period="P30D"
+  Report: Min, Max, Average, trend direction
+  Alert if: Avg >85%, Max >95%, or sustained growth
+
+STEP 4: Cache utilization (storage health)
+  Tool: portal_appliance_cache_utilization
+  Args: appliance="{serial}", period="P30D"
+  Report: Utilization trend, capacity concerns
+  Alert if: Sustained >90% or rapid growth
+
+PHASE 3: Performance Indicators
+───────────────────────────────
+STEP 5: Cache disk latency
+  Tool: portal_appliance_cache_disk_io_time
+  Args: appliance="{serial}", period="P30D"
+  Report: Latency trends, performance degradation
+  Alert if: Latency increasing or >50ms average
+
+STEP 6: Network throughput
+  Tool: portal_appliance_network_utilization
+  Args: appliance="{serial}", period="P30D"
+  Report: Throughput patterns, saturation risk
+  Alert if: Sustained high utilization or drops
+
+FINAL REPORT should include:
+- Executive summary (1-2 sentences)
+- Health score (Healthy/Warning/Critical)
+- Key metrics table (min/max/avg for each)
+- Trend analysis (improving/stable/degrading)
+- Issues found with severity
+- Recommended actions
+"""
+
+    def _comprehensive_analysis_steps(self, serial: str) -> str:
+        return f"""
+🔬 COMPREHENSIVE ANALYSIS (Full Telemetry Review)
+{'─' * 40}
+
+⚠️ NOTE: This is a thorough analysis. Execute steps sequentially.
+
+PHASE 1: Health Baseline
+────────────────────────
+STEP 1: Current performance snapshot
+  Tool: portal_appliance_current_appliance_performance
+  Args: appliance="{serial}", period="PT3H"
+
+STEP 2: Deep health score (if anomalies suspected)
+  Tool: portal_appliance_appliance_health_score
+  Args: appliance="{serial}", period="P7D"
+  Note: Expensive call - only if Step 1 shows issues
+
+PHASE 2: CPU & Load Analysis
+────────────────────────────
+STEP 3: CPU utilization (30-day trend)
+  Tool: portal_appliance_cpu_utilization
+  Args: appliance="{serial}", period="P30D"
+
+STEP 4: Load average (system stress)
+  Tool: portal_appliance_load_average
+  Args: appliance="{serial}", period="P30D"
+
+PHASE 3: Memory Deep Dive
+─────────────────────────
+STEP 5: Memory utilization trend
+  Tool: portal_appliance_memory_utilization
+  Args: appliance="{serial}", period="P30D"
+
+STEP 6: Memory breakdown (if issues in Step 5)
+  Tool: portal_appliance_memory_utilization_smart
+  Args: appliance="{serial}", period="P7D"
+
+PHASE 4: Storage & Cache Analysis
+─────────────────────────────────
+STEP 7: Cache utilization
+  Tool: portal_appliance_cache_utilization
+  Args: appliance="{serial}", period="P30D"
+
+STEP 8: Cache hits/misses (efficiency)
+  Tool: portal_appliance_cache_hits_misses
+  Args: appliance="{serial}", period="P30D"
+
+STEP 9: Cache disk IOPS
+  Tool: portal_appliance_cache_disk_iops
+  Args: appliance="{serial}", period="P30D"
+
+STEP 10: Cache disk latency
+  Tool: portal_appliance_cache_disk_io_time
+  Args: appliance="{serial}", period="P30D"
+
+PHASE 5: OS & System Disk
+─────────────────────────
+STEP 11: OS disk IOPS
+  Tool: portal_appliance_os_disk_iops
+  Args: appliance="{serial}", period="P30D"
+
+STEP 12: OS disk latency
+  Tool: portal_appliance_os_disk_io_time
+  Args: appliance="{serial}", period="P30D"
+
+PHASE 6: Network Analysis
+─────────────────────────
+STEP 13: Network throughput
+  Tool: portal_appliance_network_utilization
+  Args: appliance="{serial}", period="P30D"
+
+STEP 14: SMB connections (client load)
+  Tool: portal_appliance_smb_connections
+  Args: appliance="{serial}", period="P30D"
+
+PHASE 7: Specialized Storage (if applicable)
+────────────────────────────────────────────
+STEP 15: CoW disk performance
+  Tool: portal_appliance_cow_disk_iops
+  Args: appliance="{serial}", period="P30D"
+
+STEP 16: File IQ disk performance (if File IQ enabled)
+  Tool: portal_appliance_file_iq_disk_iops
+  Args: appliance="{serial}", period="P30D"
+
+COMPREHENSIVE REPORT FORMAT:
+============================
+1. EXECUTIVE SUMMARY
+   - Overall health assessment
+   - Critical findings (if any)
+   - Trend direction (improving/stable/degrading)
+
+2. METRICS SUMMARY TABLE
+   | Metric | Min | Max | Avg | Trend | Status |
+   |--------|-----|-----|-----|-------|--------|
+   (Include all analyzed metrics)
+
+3. ISSUE ANALYSIS
+   For each issue found:
+   - Description
+   - Severity (Critical/Warning/Info)
+   - Evidence (specific data points)
+   - Potential root cause
+   - Recommended action
+
+4. TREND ANALYSIS
+   - 30-day trend direction for each metric
+   - Correlation between metrics
+   - Predicted issues if trends continue
+
+5. RECOMMENDATIONS
+   - Immediate actions required
+   - Short-term optimizations
+   - Long-term capacity planning
+"""
+
+    def _analysis_tips(self) -> str:
+        return """
+
+💡 ANALYSIS TIPS
+{'─' * 40}
+
+THRESHOLDS FOR ALERTS:
+• CPU: Warning >70% avg, Critical >90% avg
+• Memory: Warning >80% avg, Critical >95% avg  
+• Cache: Warning >85% utilization, Critical >95%
+• Disk Latency: Warning >20ms, Critical >50ms
+• Cache Hit Rate: Warning <80%, Critical <60%
+
+TREND INTERPRETATION:
+• Compare first week vs last week of period
+• Calculate % change to determine trend direction
+• Look for sudden changes (may indicate events)
+
+CORRELATION PATTERNS:
+• High CPU + High Memory = Resource exhaustion
+• Low Cache Hits + High Disk I/O = Cache sizing issue
+• High Network + High CPU = Heavy client load
+• High Latency + Normal IOPS = Disk performance issue
+
+REPORTING BEST PRACTICES:
+• Lead with the most critical finding
+• Use specific numbers, not vague descriptions
+• Always include recommended actions
+• Note any data gaps or anomalies
+"""
+
+
+def register_comprehensive_analysis_guide_tool(
+    registry,
+    integration_helper: NMCPortalIntegration,
+) -> None:
+    """Register the comprehensive analysis guide tool."""
+    tool = ApplianceComprehensiveAnalysisGuideTool(integration_helper)
+    registry.register_tool(tool)
+    logger.info(f"Registered comprehensive analysis guide tool: {tool.name}")
+
+

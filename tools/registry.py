@@ -285,7 +285,17 @@ class ToolRegistry:
         register_smart_memory_tool(self, appliance_client, integration_helper)
         count += 1
 
-        print(f"✅ Registered {count} Portal telemetry tools", file=sys.stderr)
+        # Register WORKFLOW tools (analysis guidance)
+        # These tools return step-by-step instructions for comprehensive analysis
+        # They guide the LLM on which data tools to call and in what order
+        from tools.portal_telemetry.volume_workflow_tools import register_volume_workflow_tools
+        from tools.portal_telemetry.appliance_workflow_tools import register_appliance_workflow_tools
+        
+        register_volume_workflow_tools(self)
+        register_appliance_workflow_tools(self)
+        count += 6  # 3 volume + 3 appliance workflow tools
+
+        print(f"✅ Registered {count} Portal telemetry tools (including workflow tools)", file=sys.stderr)
 
     def register_portal_edge_tools(
         self,

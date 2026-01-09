@@ -304,10 +304,9 @@ class GetVolumeProtectionMetricsTool(BaseVolumeTelemetryTool):
         super().__init__(
             name="get_volume_protection_metrics",
             description=(
-                "[PORTAL - PREFERRED FOR PROTECTION STATUS] Get comprehensive data protection metrics from Portal Ops IQ. "
-                "USE THIS INSTEAD OF NMC protection/unprotected tools. "
-                "Provides real-time timing and performance data: latest snapshot version, protection anomalies, "
-                "OUD age, snapshot timing, files protected per snapshot, and protection performance by appliance. "
+                "[PORTAL] Get protection metrics from Portal Ops IQ. "
+                "Returns snapshot version, OUD age, timing, and anomalies. "
+                "For comprehensive reports, use get_analysis_workflow with workflow_type='volume-protection-report'. "
                 "Accepts volume name or GUID."
             ),
             integration_helper=integration_helper,
@@ -689,8 +688,9 @@ class GetVolumePropagationMetricsTool(BaseVolumeTelemetryTool):
         super().__init__(
             name="get_volume_propagation_metrics",
             description=(
-                "[PORTAL - PREFERRED FOR SYNC STATUS] Get sync timing metrics from Portal Ops IQ. "
-                "USE THIS INSTEAD OF NMC sync tools. Shows real-time propagation timing to connected appliances."
+                "[PORTAL] Get sync timing metrics from Portal Ops IQ. "
+                "Returns propagation delays and outliers to connected appliances. "
+                "For comprehensive reports, use get_analysis_workflow with workflow_type='volume-protection-report'."
             ),
             integration_helper=integration_helper,
             propagation_client=api_client,
@@ -1238,3 +1238,464 @@ def _calculate_appliance_sync_status(
         "last_snapshot": last_snapshot,
         "last_sync": last_sync,
     }
+
+
+# ============================================================================
+# COMPREHENSIVE VOLUME ANALYSIS GUIDANCE TOOL
+# ============================================================================
+
+
+class VolumeComprehensiveAnalysisGuideTool(BaseTool):
+    """Meta-tool that provides guidance for comprehensive volume protection analysis.
+    
+    Instead of making expensive calls to all telemetry endpoints, this tool
+    returns instructions to the LLM on how to systematically analyze volume
+    protection and propagation metrics.
+    """
+
+    def __init__(self, integration_helper: NMCPortalIntegration):
+        description = (
+            "[PORTAL - USE THIS FIRST FOR VOLUME HEALTH/PROTECTION REPORTS] "
+            "Get step-by-step instructions for comprehensive volume protection health report. "
+            "USE THIS TOOL FIRST when user asks for: protection health report, volume health analysis, "
+            "protection status, sync analysis, snapshot analysis, propagation analysis, or any volume telemetry review. "
+            "Returns systematic guidance to analyze protection timing, OUD, propagation delays, snapshot versions, "
+            "appliance activity distribution, and sync outliers. This is a guidance tool - efficient, no expensive API calls."
+        )
+        super().__init__(
+            name="portal_volume_comprehensive_analysis_guide",
+            description=description,
+        )
+        self.integration = integration_helper
+
+    def get_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "volume": {
+                    "type": "string",
+                    "description": "Volume name or GUID to analyze",
+                },
+                "analysis_depth": {
+                    "type": "string",
+                    "enum": ["quick", "standard", "comprehensive"],
+                    "description": "Level of analysis: quick (protection status only), standard (protection + propagation), comprehensive (full analysis with outlier detection)",
+                    "default": "standard",
+                },
+            },
+            "required": ["volume"],
+            "additionalProperties": False,
+        }
+
+    async def execute(self, arguments: Dict[str, Any]) -> List[TextContent]:
+        volume = arguments.get("volume", "").strip()
+        analysis_depth = arguments.get("analysis_depth", "standard")
+
+        if not volume:
+            return self.format_error("Volume identifier is required")
+
+        # Resolve the volume to get GUID and connected appliances
+        try:
+            volume_guid, filer_serials = await self._resolve_volume(volume)
+        except Exception as e:
+            return self.format_error(f"Unable to resolve volume '{volume}': {e}")
+
+        guide = self._generate_analysis_guide(volume, volume_guid, filer_serials, analysis_depth)
+        return [TextContent(type="text", text=guide)]
+
+    async def _resolve_volume(self, volume_id: str) -> Tuple[str, List[str]]:
+        """Resolve volume identifier and get connected filer serials."""
+        volume_guid, filer_serials = await self.integration.resolve_volume_identifier(volume_id)
+        if not volume_guid:
+            raise ValueError(f"Could not resolve volume: {volume_id}")
+        return volume_guid, filer_serials or []
+
+    def _generate_analysis_guide(self, volume_name: str, volume_guid: str, filer_serials: List[str], depth: str) -> str:
+        """Generate the analysis guide based on depth level."""
+        
+        appliance_list = ", ".join(filer_serials) if filer_serials else "Unknown"
+        
+        guide = f"""📊 COMPREHENSIVE VOLUME PROTECTION & PROPAGATION ANALYSIS GUIDE
+{'=' * 70}
+
+Target Volume: {volume_name}
+Volume GUID: {volume_guid}
+Connected Appliances: {len(filer_serials)} ({appliance_list})
+Analysis Depth: {depth.upper()}
+Recommended Period: P30D (30 days) for trend analysis
+
+"""
+
+        if depth == "quick":
+            guide += self._quick_analysis_steps(volume_guid, filer_serials)
+        elif depth == "standard":
+            guide += self._standard_analysis_steps(volume_guid, filer_serials)
+        else:  # comprehensive
+            guide += self._comprehensive_analysis_steps(volume_guid, filer_serials)
+
+        guide += self._analysis_tips()
+        
+        return guide
+
+    def _quick_analysis_steps(self, volume_guid: str, filer_serials: List[str]) -> str:
+        return f"""
+🚀 QUICK ANALYSIS (Protection Status Check)
+{'─' * 50}
+
+Execute these steps IN ORDER:
+
+STEP 1: Get Protection Metrics Summary
+  Tool: get_volume_protection_metrics
+  Args: volume="{volume_guid}", period="P7D"
+  Look for:
+    • Latest snapshot version
+    • Average time to protect
+    • Oldest unprotected data age
+    • Any anomalies flagged
+  
+STEP 2: Check Current Sync Status
+  Tool: get_all_appliances_sync_status
+  Args: volume="{volume_guid}", period="PT6H"
+  Look for:
+    • Which appliances are up to date
+    • Any appliances lagging behind
+    • Version mismatches
+
+ANALYSIS COMPLETE - Report findings with:
+- Protection health status (healthy/warning/critical)
+- Current oldest unprotected data age
+- Sync status across all appliances
+- Immediate concerns if any
+"""
+
+    def _standard_analysis_steps(self, volume_guid: str, filer_serials: List[str]) -> str:
+        return f"""
+📋 STANDARD ANALYSIS (Protection + Propagation Review)
+{'─' * 50}
+
+Execute these steps IN ORDER:
+
+PHASE 1: Protection Health Assessment
+─────────────────────────────────────
+STEP 1: Get comprehensive protection metrics
+  Tool: get_volume_protection_metrics
+  Args: volume="{volume_guid}", period="P30D", show_details=true
+  Extract and report:
+    • Latest volume version
+    • Which appliance created the latest snapshot
+    • Average time to protect (target: <1 hour)
+    • Protection anomalies (worst cases)
+    • Oldest Unprotected Data (OUD) age trend
+    • Snapshot frequency pattern
+
+STEP 2: Check snapshot timeline details
+  Tool: portal_volume_snapshot_timeline
+  Args: volume="{volume_guid}", period="P30D"
+  Extract and report:
+    • Data push duration trends
+    • Metadata push duration trends
+    • Any failed or incomplete snapshots
+
+PHASE 2: Propagation (Sync) Analysis
+────────────────────────────────────
+STEP 3: Get propagation metrics
+  Tool: get_volume_propagation_metrics
+  Args: volume="{volume_guid}", period="P30D", show_outliers=true
+  Extract and report:
+    • Average sync time per appliance
+    • Propagation delay distribution
+    • Outlier events (unusually slow syncs)
+
+STEP 4: Check all appliances sync status
+  Tool: get_all_appliances_sync_status
+  Args: volume="{volume_guid}", period="P7D"
+  Extract and report:
+    • Current version on each appliance
+    • Lag (versions behind) for each
+    • Status classification (up-to-date/lagging/critical)
+
+PHASE 3: Appliance Activity Distribution
+────────────────────────────────────────
+STEP 5: Get snapshot content breakdown
+  Tool: portal_volume_snapshot_content
+  Args: volume="{volume_guid}", period="P30D"
+  Extract and calculate:
+    • Total snapshots per appliance (count by creator)
+    • Most active appliance (highest snapshot count)
+    • Least active appliance (lowest snapshot count)
+    • Distribution balance (is one appliance doing all the work?)
+
+FINAL REPORT FORMAT:
+====================
+1. PROTECTION SUMMARY
+   - Current version: [version]
+   - Avg time to protect: [X hours/minutes]
+   - OUD age: [X hours] (target: <24h)
+   - Protection health: [Healthy/Warning/Critical]
+
+2. PROPAGATION SUMMARY
+   - Avg sync time: [X minutes]
+   - Slowest appliance: [serial] at [X minutes avg]
+   - Appliances with lag: [list]
+
+3. APPLIANCE ACTIVITY
+   - Most active: [serial] with [N] snapshots
+   - Least active: [serial] with [N] snapshots
+   - Balance: [Even/Skewed]
+
+4. ISSUES FOUND
+   [List any concerns with severity]
+
+5. RECOMMENDATIONS
+   [Actionable items]
+"""
+
+    def _comprehensive_analysis_steps(self, volume_guid: str, filer_serials: List[str]) -> str:
+        # Build appliance list string without complex f-string nesting
+        if filer_serials:
+            quoted_serials = [f'"{s}"' for s in filer_serials]
+            appliance_args = f'filer_ids=[{", ".join(quoted_serials)}]'
+        else:
+            appliance_args = ""
+        
+        return f"""
+🔬 COMPREHENSIVE ANALYSIS (Full Protection & Propagation Review with Outlier Detection)
+{'─' * 70}
+
+⚠️ NOTE: This is a thorough analysis. Execute steps sequentially, collecting data for statistics.
+
+PHASE 1: Protection Baseline
+────────────────────────────
+STEP 1: Get comprehensive protection metrics
+  Tool: get_volume_protection_metrics
+  Args: volume="{volume_guid}", period="P30D", show_details=true
+  COLLECT DATA FOR:
+    • latest_version: [number]
+    • latest_snapshot_appliance: [serial]
+    • avg_time_to_protect_minutes: [number]
+    • oud_age_hours: [number]
+    • anomaly_count: [number]
+    • per_appliance_snapshot_counts: {{serial: count, ...}}
+
+STEP 2: Get oldest unprotected data trend
+  Tool: portal_volume_oldest_unprotected_data
+  Args: volume="{volume_guid}", period="P30D"
+  COLLECT DATA FOR:
+    • oud_min_hours: [number]
+    • oud_max_hours: [number]
+    • oud_avg_hours: [number]
+    • oud_trend: [improving/stable/degrading]
+
+STEP 3: Get average time to protect trend
+  Tool: portal_volume_average_time_to_protect
+  Args: volume="{volume_guid}", period="P30D"
+  COLLECT DATA FOR:
+    • protect_time_min_minutes: [number]
+    • protect_time_max_minutes: [number]
+    • protect_time_avg_minutes: [number]
+    • protect_time_trend: [improving/stable/degrading]
+
+PHASE 2: Snapshot Analysis
+──────────────────────────
+STEP 4: Get snapshot timeline details
+  Tool: portal_volume_snapshot_timeline
+  Args: volume="{volume_guid}", period="P30D"
+  COLLECT DATA FOR:
+    • total_snapshots: [number]
+    • data_push_avg_seconds: [number]
+    • metadata_push_avg_seconds: [number]
+    • failed_snapshots: [number]
+
+STEP 5: Get snapshot content breakdown
+  Tool: portal_volume_snapshot_content
+  Args: volume="{volume_guid}", period="P30D"
+  COLLECT DATA FOR (per appliance):
+    • appliance_snapshot_counts: {{serial: count, ...}}
+    • most_active_appliance: [serial]
+    • most_active_count: [number]
+    • least_active_appliance: [serial]
+    • least_active_count: [number]
+
+STEP 6: Get snapshot details (individual snapshot info)
+  Tool: portal_volume_snapshot_details
+  Args: volume="{volume_guid}", period="P30D"
+  COLLECT DATA FOR:
+    • snapshot_versions: [list of versions]
+    • snapshot_creators: [list of appliance serials]
+    • snapshot_times: [list of timestamps]
+
+PHASE 3: Propagation (Sync) Deep Dive
+─────────────────────────────────────
+STEP 7: Get propagation metrics with outliers
+  Tool: get_volume_propagation_metrics
+  Args: volume="{volume_guid}", period="P30D", show_outliers=true
+  COLLECT DATA FOR (per appliance):
+    • sync_times_per_appliance: {{serial: [list of sync times], ...}}
+    • sync_avg_per_appliance: {{serial: avg_minutes, ...}}
+    • sync_outliers: [list of {{serial, time, duration}}]
+
+STEP 8: Get snapshot propagation by appliance
+  Tool: portal_volume_snapshot_propagation_by_appliance
+  Args: volume="{volume_guid}", period="P30D"
+  COLLECT DATA FOR:
+    • propagation_delays: {{serial: [list of delays], ...}}
+    • avg_propagation_per_appliance: {{serial: avg_minutes, ...}}
+
+STEP 9: Check all appliances current sync status
+  Tool: get_all_appliances_sync_status
+  Args: volume="{volume_guid}", period="P7D"
+  COLLECT DATA FOR:
+    • current_versions: {{serial: version, ...}}
+    • lag_versions: {{serial: lag, ...}}
+    • last_sync_times: {{serial: timestamp, ...}}
+
+PHASE 4: Statistical Analysis (PERFORM CALCULATIONS)
+────────────────────────────────────────────────────
+After collecting all data, perform these calculations:
+
+CALCULATION 1: Snapshot Activity Distribution
+  • Calculate mean snapshot count across appliances
+  • Calculate standard deviation of snapshot counts
+  • Flag appliances with count < (mean - 2*stddev) as "underactive"
+  • Flag appliances with count > (mean + 2*stddev) as "overactive"
+
+CALCULATION 2: Sync Time Outlier Detection (3 Standard Deviations)
+  For each appliance:
+    • Calculate mean sync time
+    • Calculate standard deviation
+    • Identify sync events > (mean + 3*stddev) as OUTLIERS
+    • Flag appliance if >5% of syncs are outliers
+
+CALCULATION 3: Sync Freshness Analysis
+  For each appliance:
+    • Calculate hours since last sync
+    • Calculate typical sync interval (from historical data)
+    • Flag if current gap > 3 * typical_interval
+
+CALCULATION 4: Protection Timing Trends
+  • Compare first week avg vs last week avg for:
+    - Time to protect
+    - OUD age
+    - Sync delays
+  • Calculate % change to determine trend direction
+
+COMPREHENSIVE REPORT FORMAT:
+============================
+
+1. EXECUTIVE SUMMARY
+   ─────────────────
+   Volume: {volume_guid}
+   Analysis Period: 30 days
+   Overall Health: [Healthy/Warning/Critical]
+   Key Finding: [One sentence summary of most important finding]
+
+2. PROTECTION METRICS
+   ──────────────────
+   | Metric | Min | Max | Avg | Trend | Status |
+   |--------|-----|-----|-----|-------|--------|
+   | Time to Protect | Xm | Xm | Xm | ↑/→/↓ | ✅/⚠️/🚨 |
+   | OUD Age | Xh | Xh | Xh | ↑/→/↓ | ✅/⚠️/🚨 |
+   
+   Latest Version: [version] (created by [appliance] at [time])
+
+3. APPLIANCE ACTIVITY DISTRIBUTION
+   ────────────────────────────────
+   | Appliance | Snapshots | % of Total | Status |
+   |-----------|-----------|------------|--------|
+   | [serial]  | [count]   | [%]        | Most Active / Normal / Least Active |
+   
+   Distribution Balance: [Even/Skewed]
+   ⚠️ Flags: [List any under/overactive appliances]
+
+4. PROPAGATION (SYNC) ANALYSIS
+   ───────────────────────────
+   | Appliance | Avg Sync | Current Version | Lag | Status |
+   |-----------|----------|-----------------|-----|--------|
+   | [serial]  | [Xm]     | [version]       | [N] | ✅/⚠️/🚨 |
+   
+   🚨 SYNC OUTLIERS (>3 Standard Deviations):
+   [List appliances with sync time outliers]
+   
+   ⚠️ SYNC FRESHNESS WARNINGS:
+   [List appliances that haven't synced recently]
+
+5. TREND ANALYSIS (30-Day)
+   ───────────────────────
+   • Time to Protect: [improving/stable/degrading] ([X]% change)
+   • OUD Age: [improving/stable/degrading] ([X]% change)
+   • Sync Delays: [improving/stable/degrading] ([X]% change)
+
+6. ISSUES & ANOMALIES
+   ──────────────────
+   [For each issue:]
+   🚨/⚠️ [Issue title]
+      Evidence: [Specific data points]
+      Impact: [What this means]
+      Severity: Critical/Warning/Info
+
+7. RECOMMENDATIONS
+   ───────────────
+   IMMEDIATE ACTIONS:
+   • [Action 1 if critical issues]
+   
+   SHORT-TERM:
+   • [Action 2]
+   
+   MONITORING:
+   • [Ongoing monitoring recommendations]
+"""
+
+    def _analysis_tips(self) -> str:
+        return """
+
+💡 VOLUME ANALYSIS TIPS
+{'─' * 50}
+
+THRESHOLDS FOR ALERTS:
+• OUD Age: Warning >4 hours, Critical >24 hours
+• Time to Protect: Warning >30 min, Critical >2 hours
+• Sync Lag (versions): Warning >5, Critical >20
+• Sync Time: Warning >15 min, Critical >1 hour
+• Sync Freshness: Warning if 2x typical interval, Critical if 3x
+
+OUTLIER DETECTION (3 Standard Deviations):
+• Calculate mean (μ) and standard deviation (σ) for sync times
+• Outlier threshold = μ + 3σ
+• Example: If mean=5min, stddev=2min, outlier threshold=11min
+• Flag appliances with >5% outlier rate
+
+SNAPSHOT DISTRIBUTION ANALYSIS:
+• Ideal: All appliances contribute roughly equally
+• Warning sign: One appliance doing >70% of snapshots
+• This could indicate: failover scenario, misconfiguration, or load imbalance
+
+SYNC FRESHNESS INTERPRETATION:
+• Calculate typical sync interval from historical patterns
+• Current gap > 3x typical = potential issue
+• Consider: network issues, appliance offline, or configuration problems
+
+TREND CALCULATION:
+• Week 1 avg = mean of first 7 days
+• Week 4 avg = mean of last 7 days
+• % Change = ((Week4 - Week1) / Week1) * 100
+• Improving: negative % for OUD/protect time (lower is better)
+• Degrading: positive % for OUD/protect time (higher is worse)
+
+CORRELATION PATTERNS:
+• High OUD + Normal Protect Time = Snapshot frequency too low
+• High Protect Time + High OUD = System overloaded or network issues
+• Uneven Snapshot Distribution + High OUD = Failover/recovery scenario
+• Sync Outliers on Single Appliance = Network issue to that appliance
+• Sync Outliers Everywhere = Volume-level issue (size, complexity)
+"""
+
+
+def register_volume_comprehensive_analysis_guide_tool(
+    registry,
+    integration_helper: NMCPortalIntegration,
+) -> None:
+    """Register the volume comprehensive analysis guide tool."""
+    tool = VolumeComprehensiveAnalysisGuideTool(integration_helper)
+    registry.register_tool(tool)
+    logger.info(f"Registered volume comprehensive analysis guide tool: {tool.name}")
+

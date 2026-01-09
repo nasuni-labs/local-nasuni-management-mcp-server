@@ -124,13 +124,13 @@ APPLIANCE_TELEMETRY_CONFIG: Dict[str, Dict[str, Any]] = {
     "current_appliance_performance": {
         "path": "current_appliance_performance",
         "display_name": "Current Appliance Performance",
-        "description": "Short-duration aggregate of CPU, memory, I/O stress.",
+        "description": "[PORTAL - PREFERRED FOR HEALTH] Quick appliance performance health check. USE THIS FIRST for appliance health questions. Returns CPU, memory, I/O stress metrics efficiently.",
         "request_type": "duration",
     },
     "appliance_health_score": {
         "path": "appliance_health_score",
         "display_name": "Appliance Health Score",
-        "description": "[PORTAL - PREFERRED FOR HEALTH STATUS] Composite health score with anomaly context. Use this instead of NMC filer health tools for real-time appliance health.",
+        "description": "[PORTAL - USE ONLY IF MORE DETAIL NEEDED] Deeper health analysis with anomaly detection. EXPENSIVE CALL - only use when user explicitly needs anomaly detection or detailed health scoring beyond current_appliance_performance.",
         "request_type": "health",
     },
 }
