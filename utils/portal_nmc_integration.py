@@ -223,6 +223,66 @@ class NMCPortalIntegration:
         logger.warning(f"Filer identifier '{identifier}' not found in NMC inventory; using as-is")
         return normalized, "provided"
 
+    async def resolve_filer_to_guid(self, identifier: str) -> Tuple[Optional[str], str]:
+        """Resolve filer identifier (serial, name, or GUID) to a filer GUID.
+        
+        This is needed for Portal Edge API which uses filer GUID (not serial) for lookups.
+        
+        Args:
+            identifier: Filer serial number, description/name, or GUID
+            
+        Returns:
+            Tuple of (filer_guid, match_type) where match_type indicates how it was resolved
+        """
+        import re
+        
+        normalized = (identifier or "").strip()
+        if not normalized:
+            return None, "unknown"
+
+        normalized_lower = normalized.lower()
+        
+        # Check if it looks like a UUID (GUID format)
+        uuid_pattern = re.compile(
+            r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+            re.IGNORECASE
+        )
+        is_uuid = bool(uuid_pattern.match(normalized))
+
+        # Try to resolve via NMC inventory first
+        filers = await self._get_cached_filers()
+        for filer in filers:
+            serial = (filer.get("serial_number") or "").strip()
+            description = (filer.get("description") or "").strip()
+            guid = (filer.get("guid") or "").strip()
+            name = (filer.get("name") or "").strip()
+
+            if not guid:
+                continue  # Skip filers without GUID
+
+            if guid.lower() == normalized_lower:
+                logger.info(f"Resolved filer GUID directly: {guid}")
+                return guid, "guid"
+            if serial and serial.lower() == normalized_lower:
+                logger.info(f"Resolved filer serial to GUID: {serial} -> {guid}")
+                return guid, "serial"
+            if description and description.lower() == normalized_lower:
+                logger.info(f"Resolved filer description to GUID: {description} -> {guid}")
+                return guid, "description"
+            if name and name.lower() == normalized_lower:
+                logger.info(f"Resolved filer name to GUID: {name} -> {guid}")
+                return guid, "name"
+
+        # Not found in NMC inventory - if it looks like a UUID, use it directly
+        # (Portal may have edges that NMC doesn't know about)
+        if is_uuid:
+            logger.info(f"Using provided UUID directly (not in NMC inventory): {normalized}")
+            return normalized, "uuid_direct"
+        
+        # Not a UUID and not in inventory - can't resolve
+        logger.warning(f"Filer identifier '{identifier}' not found in NMC inventory and is not a valid UUID")
+        return None, "not_found"
+
     async def _get_cached_filers(self) -> List[Dict[str, Any]]:
         """Return cached filer list, fetching from NMC if necessary."""
         if self._cached_filers is not None:

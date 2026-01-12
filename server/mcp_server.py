@@ -208,6 +208,9 @@ class MCPServer:
                             portal_volumes_client,
                         )
 
+                        # Register TCO (Total Cost of Ownership) analysis tools
+                        self.tool_registry.register_tco_tools()
+
                     except ImportError as e:
                         print(f"⚠️ Portal metrics import error: {e}", file=sys.stderr)
                         import traceback

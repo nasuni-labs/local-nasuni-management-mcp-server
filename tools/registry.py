@@ -322,6 +322,22 @@ class ToolRegistry:
         
         print("✅ Registered Portal Volume tools", file=sys.stderr)
 
+    def register_tco_tools(self):
+        """Register Total Cost of Ownership (TCO) analysis tools."""
+        print("📦 Registering TCO tools...", file=sys.stderr)
+        
+        try:
+            from tools.tco import get_tco_tools
+            
+            for tool in get_tco_tools():
+                self.register_tool(tool)
+            
+            print("✅ Registered 4 TCO analysis tools", file=sys.stderr)
+        except ImportError as e:
+            print(f"❌ Failed to import TCO tools: {e}", file=sys.stderr)
+        except Exception as e:
+            print(f"❌ Error registering TCO tools: {e}", file=sys.stderr)
+
 
     def get_tool_list(self) -> List[Tool]:
         """Get list of all registered tools for MCP."""
@@ -381,13 +397,17 @@ class ToolRegistry:
             'credential': [],
             'notification': [],
             'volume_filer': [],
-            'portal': []
+            'portal': [],
+            'tco': []
         }
         
         for name in self.tools.keys():
             
+            # TCO tools (cost optimization)
+            if name.startswith('tco_'):
+                tool_categories['tco'].append(name)
             # Portal tools (auth and telemetry)
-            if name.startswith('portal_'):
+            elif name.startswith('portal_'):
                 tool_categories['portal'].append(name)
             # Health monitoring
             elif 'filer_health' in name or 'health' in name:

@@ -55,6 +55,8 @@ class EdgeMachine(BaseModel):
     fiq_disk: Optional[str] = None
     cow_disk: Optional[str] = None
     cpu_cores: Optional[int] = None
+    vm_instance_type: Optional[str] = None
+    vm_region: Optional[str] = None
 
 
 class SimpleEdgeDto(BaseModel):

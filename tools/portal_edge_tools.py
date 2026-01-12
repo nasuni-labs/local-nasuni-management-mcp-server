@@ -21,6 +21,76 @@ from config.logging_setup import get_logger
 logger = get_logger(__name__)
 
 
+async def resolve_edge_id_from_portal(
+    api_client: PortalEdgesAPIClient,
+    identifier: str,
+) -> tuple[str | None, str]:
+    """Resolve edge identifier using Portal's /edges endpoint.
+    
+    This function uses Portal's own edge list to resolve identifiers,
+    without relying on NMC data.
+    
+    Args:
+        api_client: Portal Edges API client
+        identifier: Edge name, description, serial, or ID (UUID)
+        
+    Returns:
+        Tuple of (edge_id, match_type) or (None, "not_found")
+    """
+    import re
+    
+    normalized = identifier.strip()
+    normalized_lower = normalized.lower()
+    
+    # Check if it looks like a UUID
+    uuid_pattern = re.compile(
+        r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+        re.IGNORECASE
+    )
+    is_uuid = bool(uuid_pattern.match(normalized))
+    
+    # If it's a UUID, try using it directly first
+    if is_uuid:
+        try:
+            edge = await api_client.get_edge(normalized)
+            if edge and edge.id:
+                logger.info(f"Resolved edge ID directly: {normalized}")
+                return normalized, "id_direct"
+        except Exception as e:
+            logger.debug(f"Direct UUID lookup failed: {e}")
+    
+    # Search through Portal's edge list
+    try:
+        edges_response = await api_client.get_edges()
+        for edge in edges_response.items:
+            edge_id = (edge.id or "").strip()
+            edge_desc = (edge.description or "").strip()
+            edge_serial = (edge.serial or "").strip()
+            
+            if not edge_id:
+                continue
+            
+            if edge_id.lower() == normalized_lower:
+                logger.info(f"Resolved edge by ID: {edge_id}")
+                return edge_id, "id"
+            if edge_serial and edge_serial.lower() == normalized_lower:
+                logger.info(f"Resolved edge by serial: {edge_serial} -> {edge_id}")
+                return edge_id, "serial"
+            if edge_desc and edge_desc.lower() == normalized_lower:
+                logger.info(f"Resolved edge by description: {edge_desc} -> {edge_id}")
+                return edge_id, "description"
+    except Exception as e:
+        logger.error(f"Error fetching edges list: {e}")
+    
+    # If it's a UUID but wasn't found in the list, still try it
+    # (edge might exist but not be in list response)
+    if is_uuid:
+        logger.info(f"Using provided UUID directly (not in edges list): {normalized}")
+        return normalized, "uuid_provided"
+    
+    return None, "not_found"
+
+
 class PortalListEdgesTool(BaseTool):
     """Tool for listing all Edge appliances from Portal API."""
 
@@ -138,7 +208,7 @@ class PortalGetEdgeDetailsTool(BaseTool):
             "This is the authoritative source for appliance hardware details. Returns: "
             "CPU model and core count, RAM size, disk configurations (cache/OS/FIQ/COW), "
             "build version and platform, IP address, location, volume ownership stats, "
-            "and service configurations. Accepts appliance name or serial number."
+            "and service configurations. Accepts appliance name, description, or ID (UUID)."
         )
         super().__init__(
             name="portal_get_edge_details",
@@ -153,7 +223,7 @@ class PortalGetEdgeDetailsTool(BaseTool):
             "properties": {
                 "appliance": {
                     "type": "string",
-                    "description": "Edge appliance name (description) or serial number (UUID)",
+                    "description": "Edge appliance name (description), serial, or ID (UUID)",
                 },
             },
             "required": ["appliance"],
@@ -167,12 +237,17 @@ class PortalGetEdgeDetailsTool(BaseTool):
             if not appliance:
                 return self.format_error("Appliance identifier is required")
 
-            # Resolve appliance identifier to serial number
-            serial_number, match_type = await self.integration.resolve_filer_identifier(appliance)
-            if not serial_number:
-                return self.format_error(f"Unable to resolve appliance identifier '{appliance}'")
+            # Resolve appliance identifier using Portal's own edges endpoint
+            edge_id, match_type = await resolve_edge_id_from_portal(self.api_client, appliance)
+            if not edge_id:
+                return self.format_error(
+                    f"Unable to find edge '{appliance}'. "
+                    "Please provide a valid edge name, description, serial, or ID (UUID)."
+                )
 
-            edge = await self.api_client.get_edge(serial_number)
+            logger.info(f"Fetching edge details for ID: {edge_id}")
+            edge = await self.api_client.get_edge(edge_id)
+            logger.debug(f"Edge response: {edge.model_dump()}")
 
             output = self._format_response(edge, appliance, match_type)
             return [TextContent(type="text", text=output)]
@@ -225,6 +300,10 @@ class PortalGetEdgeDetailsTool(BaseTool):
             sections.append(f"OS Disk: {edge.machine.os_disk or 'N/A'}")
             sections.append(f"File IQ Disk: {edge.machine.fiq_disk or 'N/A'}")
             sections.append(f"CoW Disk: {edge.machine.cow_disk or 'N/A'}")
+            # VM/Cloud instance details (if applicable)
+            if edge.machine.vm_instance_type or edge.machine.vm_region:
+                sections.append(f"VM Instance Type: {edge.machine.vm_instance_type or 'N/A'}")
+                sections.append(f"VM Region: {edge.machine.vm_region or 'N/A'}")
         else:
             sections.append("Hardware information not available")
         sections.append("")
@@ -300,12 +379,15 @@ class PortalGetEdgeEventForwarderTool(BaseTool):
             if not appliance:
                 return self.format_error("Appliance identifier is required")
 
-            # Resolve appliance identifier to serial number
-            serial_number, match_type = await self.integration.resolve_filer_identifier(appliance)
-            if not serial_number:
-                return self.format_error(f"Unable to resolve appliance identifier '{appliance}'")
+            # Resolve appliance identifier using Portal's own edges endpoint
+            edge_id, match_type = await resolve_edge_id_from_portal(self.api_client, appliance)
+            if not edge_id:
+                return self.format_error(
+                    f"Unable to find edge '{appliance}'. "
+                    "Please provide a valid edge name, description, serial, or ID (UUID)."
+                )
 
-            response = await self.api_client.get_edge_event_forwarder(serial_number)
+            response = await self.api_client.get_edge_event_forwarder(edge_id)
 
             output = self._format_response(response, appliance, match_type)
             return [TextContent(type="text", text=output)]
@@ -369,7 +451,7 @@ class PortalGetEdgeS3StatusTool(BaseTool):
             "properties": {
                 "appliance": {
                     "type": "string",
-                    "description": "Edge appliance name (description) or serial number (UUID)",
+                    "description": "Edge appliance name (description), serial, or ID (UUID)",
                 },
             },
             "required": ["appliance"],
@@ -383,12 +465,15 @@ class PortalGetEdgeS3StatusTool(BaseTool):
             if not appliance:
                 return self.format_error("Appliance identifier is required")
 
-            # Resolve appliance identifier to serial number
-            serial_number, match_type = await self.integration.resolve_filer_identifier(appliance)
-            if not serial_number:
-                return self.format_error(f"Unable to resolve appliance identifier '{appliance}'")
+            # Resolve appliance identifier using Portal's own edges endpoint
+            edge_id, match_type = await resolve_edge_id_from_portal(self.api_client, appliance)
+            if not edge_id:
+                return self.format_error(
+                    f"Unable to find edge '{appliance}'. "
+                    "Please provide a valid edge name, description, serial, or ID (UUID)."
+                )
 
-            response = await self.api_client.get_edge_s3_edge_config(serial_number)
+            response = await self.api_client.get_edge_s3_edge_config(edge_id)
 
             output = self._format_response(response, appliance, match_type)
             return [TextContent(type="text", text=output)]
