@@ -325,6 +325,7 @@ class TCOAnalysisResult:
     analysis_period_hours: int = 720  # Default 30 days for better baseline
     analysis_timestamp: datetime = field(default_factory=datetime.utcnow)
     pricing_source: str = "live_api"  # "live_api" or "static_fallback"
+    utilization_data_available: bool = True  # False if telemetry API failed or returned no data
     
     # Constants for transparency
     HOURS_PER_DAY: int = 24
@@ -509,23 +510,44 @@ class TCOAnalysisResult:
         
         # Utilization Metrics - show both average and peak
         lines.append("## Utilization Metrics")
-        lines.append(f"*Based on the last {self.analysis_period_hours} hours ({self.analysis_period_hours // 24} days) of telemetry data*")
-        lines.append("")
-        lines.append(f"| Metric | Average | Peak (Max) |")
-        lines.append(f"|--------|---------|------------|")
-        lines.append(f"| CPU | {self.avg_cpu_percent:.1f}% | {self.max_cpu_percent:.1f}% |")
-        lines.append(f"| Memory | {self.avg_memory_percent:.1f}% | {self.max_memory_percent:.1f}% |")
-        lines.append(f"| System Load | {self.avg_load:.2f} | {self.max_load:.2f} |")
-        lines.append(f"| Load per CPU | {self.load_per_cpu:.2f} | {self.max_load_per_cpu:.2f} |")
-        lines.append("")
-        lines.append("*Note: Peak values indicate maximum utilization during the analysis period. "
-                    "High peak values may indicate periodic spikes that should be considered for capacity planning.*")
+        if not self.utilization_data_available:
+            lines.append("")
+            lines.append("⚠️ **WARNING: TELEMETRY DATA NOT AVAILABLE**")
+            lines.append("")
+            lines.append("The utilization metrics below could not be retrieved from the Portal Telemetry API.")
+            lines.append("This may be because:")
+            lines.append("- The appliance has not been online long enough to generate telemetry data")
+            lines.append("- The telemetry API is temporarily unavailable")
+            lines.append("- The appliance is not configured to report telemetry")
+            lines.append("")
+            lines.append("**Right-sizing recommendations cannot be made without utilization data.**")
+            lines.append("Please verify the appliance is online and has telemetry enabled.")
+            lines.append("")
+        else:
+            lines.append(f"*Based on the last {self.analysis_period_hours} hours ({self.analysis_period_hours // 24} days) of telemetry data*")
+            lines.append("")
+            lines.append(f"| Metric | Average | Peak (Max) |")
+            lines.append(f"|--------|---------|------------|")
+            lines.append(f"| CPU | {self.avg_cpu_percent:.1f}% | {self.max_cpu_percent:.1f}% |")
+            lines.append(f"| Memory | {self.avg_memory_percent:.1f}% | {self.max_memory_percent:.1f}% |")
+            lines.append(f"| System Load | {self.avg_load:.2f} | {self.max_load:.2f} |")
+            lines.append(f"| Load per CPU | {self.load_per_cpu:.2f} | {self.max_load_per_cpu:.2f} |")
+            lines.append("")
+            lines.append("*Note: Peak values indicate maximum utilization during the analysis period. "
+                        "High peak values may indicate periodic spikes that should be considered for capacity planning.*")
         lines.append("")
         
         # Recommendation
         lines.append("## Right-Sizing Recommendation")
         rec = self.recommendation
-        if rec.action == "downsize":
+        if rec.action == "unknown":
+            lines.append(f"❓ **UNABLE TO DETERMINE**")
+            lines.append("")
+            lines.append(f"- **Reason**: {rec.reason}")
+            lines.append("")
+            lines.append("Without utilization data, we cannot make an informed recommendation about right-sizing.")
+            lines.append("Please ensure the appliance is online and reporting telemetry data.")
+        elif rec.action == "downsize":
             lines.append(f"💰 **COST SAVINGS OPPORTUNITY**")
             lines.append("")
             lines.append(f"Consider downsizing from **{rec.current_instance}** to **{rec.recommended_instance}**")
@@ -672,33 +694,114 @@ def parse_ram_to_gib(ram_str: Optional[str]) -> Optional[float]:
         return None
 
 
+def _select_memory_metric_for_version(version_str: Optional[str]) -> str:
+    """Select the appropriate memory metric based on appliance version.
+    
+    Returns 'memory_utilization' for versions < 10.0.4
+    Returns 'memory_utilization_details' for versions >= 10.0.4 or if version unknown
+    """
+    if not version_str:
+        # Default to new endpoint if version unknown
+        logger.debug("Version unknown, defaulting to memory_utilization_details")
+        return "memory_utilization_details"
+    
+    try:
+        # Parse version string (e.g., "10.0.4" or "9.15.2")
+        parts = version_str.split(".")
+        version_tuple = tuple(int(p) for p in parts[:3])
+        
+        threshold = (10, 0, 4)
+        
+        if version_tuple < threshold:
+            return "memory_utilization"
+        else:
+            return "memory_utilization_details"
+    except (ValueError, IndexError) as exc:
+        logger.warning(f"Could not parse version '{version_str}': {exc}")
+        # Default to new endpoint on parse error
+        return "memory_utilization_details"
+
+
 async def get_appliance_utilization_metrics(
     telemetry_api,
     serial_number: str,
     hours: int = 720,  # Default to 30 days for better baseline
+    appliance_version: Optional[str] = None,  # For version-aware memory metric selection
 ) -> Dict[str, float]:
     """Get utilization metrics (average and max) for an appliance.
     
     Uses 30 days of telemetry data by default for a more accurate baseline.
     Calculates both average and maximum values for each metric.
+    
+    Args:
+        telemetry_api: Portal telemetry API client
+        serial_number: Appliance serial number
+        hours: Time range in hours (default 720 = 30 days)
+        appliance_version: Appliance version string for smart memory metric selection
+    
+    Returns metrics with 'data_available' flag to indicate if real data was fetched.
     """
     period = hours_to_period(hours)
+    
+    # Select the correct memory metric based on version
+    memory_metric = _select_memory_metric_for_version(appliance_version)
+    logger.debug(f"Using memory metric '{memory_metric}' for version '{appliance_version}'")
     
     try:
         # Get CPU metrics
         cpu_data = await telemetry_api.get_metric(serial_number, "cpu_utilization", period=period)
+        logger.debug(f"CPU telemetry response for {serial_number}: {type(cpu_data)} - keys: {cpu_data.keys() if isinstance(cpu_data, dict) else 'N/A'}")
+        if isinstance(cpu_data, dict) and "items" in cpu_data:
+            logger.debug(f"CPU items count: {len(cpu_data['items'])}")
+            if cpu_data['items']:
+                # Log first item's structure to understand the format
+                logger.debug(f"CPU first item keys: {cpu_data['items'][0].keys() if isinstance(cpu_data['items'][0], dict) else 'N/A'}")
+                logger.debug(f"CPU first item: {cpu_data['items'][0]}")
         avg_cpu = calculate_telemetry_average(cpu_data)
         max_cpu = calculate_telemetry_max(cpu_data)
+        logger.debug(f"CPU calculated: avg={avg_cpu}, max={max_cpu}")
         
-        # Get memory metrics  
-        memory_data = await telemetry_api.get_metric(serial_number, "memory_utilization", period=period)
+        # Get memory metrics (version-aware)
+        memory_data = await telemetry_api.get_metric(serial_number, memory_metric, period=period)
+        logger.debug(f"Memory telemetry response for {serial_number}: {type(memory_data)} - keys: {memory_data.keys() if isinstance(memory_data, dict) else 'N/A'}")
+        if isinstance(memory_data, dict) and "items" in memory_data:
+            logger.debug(f"Memory items count: {len(memory_data['items'])}")
+            if memory_data['items']:
+                logger.debug(f"Memory first item keys: {memory_data['items'][0].keys() if isinstance(memory_data['items'][0], dict) else 'N/A'}")
         avg_memory = calculate_telemetry_average(memory_data)
         max_memory = calculate_telemetry_max(memory_data)
+        logger.debug(f"Memory calculated: avg={avg_memory}, max={max_memory}")
         
-        # Get load metrics
-        load_data = await telemetry_api.get_metric(serial_number, "cpu_load", period=period)
+        # Get load metrics (load_average is the correct metric name in Portal API)
+        load_data = await telemetry_api.get_metric(serial_number, "load_average", period=period)
+        logger.debug(f"Load telemetry response for {serial_number}: {type(load_data)} - keys: {load_data.keys() if isinstance(load_data, dict) else 'N/A'}")
+        if isinstance(load_data, dict) and "items" in load_data:
+            logger.debug(f"Load items count: {len(load_data['items'])}")
+            if load_data['items']:
+                logger.debug(f"Load first item keys: {load_data['items'][0].keys() if isinstance(load_data['items'][0], dict) else 'N/A'}")
+                logger.debug(f"Load first item: {load_data['items'][0]}")
         avg_load = calculate_telemetry_average(load_data)
         max_load = calculate_telemetry_max(load_data)
+        
+        # Check if we actually got any data
+        has_cpu_data = avg_cpu > 0 or max_cpu > 0
+        has_memory_data = avg_memory > 0 or max_memory > 0
+        has_load_data = avg_load > 0 or max_load > 0
+        
+        if not has_cpu_data and not has_memory_data and not has_load_data:
+            logger.warning(f"Telemetry API returned no data for {serial_number}. CPU response type: {type(cpu_data)}, Memory response type: {type(memory_data)}")
+            return {
+                "avg_cpu": 0.0,
+                "max_cpu": 0.0,
+                "avg_memory": 0.0,
+                "max_memory": 0.0,
+                "avg_load": 0.0,
+                "max_load": 0.0,
+                "data_available": False,
+                "error": "No telemetry data returned from API",
+            }
+        
+        logger.info(f"Got utilization for {serial_number}: CPU avg={avg_cpu:.1f}% max={max_cpu:.1f}%, Memory avg={avg_memory:.1f}% max={max_memory:.1f}%")
         
         return {
             "avg_cpu": avg_cpu,
@@ -707,17 +810,20 @@ async def get_appliance_utilization_metrics(
             "max_memory": max_memory,
             "avg_load": avg_load,
             "max_load": max_load,
+            "data_available": True,
         }
         
     except Exception as e:
-        logger.warning(f"Failed to get utilization metrics: {e}")
+        logger.error(f"Failed to get utilization metrics for {serial_number}: {e}")
         return {
-            "avg_cpu": 50.0,  # Default to middle values when metrics unavailable
-            "max_cpu": 75.0,
-            "avg_memory": 50.0,
-            "max_memory": 75.0,
-            "avg_load": 2.0,
-            "max_load": 4.0,
+            "avg_cpu": 0.0,
+            "max_cpu": 0.0,
+            "avg_memory": 0.0,
+            "max_memory": 0.0,
+            "avg_load": 0.0,
+            "max_load": 0.0,
+            "data_available": False,
+            "error": str(e),
         }
 
 
@@ -734,16 +840,37 @@ def calculate_telemetry_max(data: Any) -> float:
 
 
 def _extract_telemetry_values(data: Any) -> List[float]:
-    """Extract numeric values from telemetry response data."""
+    """Extract numeric values from Portal telemetry response data.
+    
+    The Portal API returns data in this format:
+    {
+        "items": [
+            {"time": "2026-01-13T10:00:00Z", "value": 5.2},
+            {"time": "2026-01-13T10:05:00Z", "value": 6.1},
+            ...
+        ],
+        "metadata": {...}
+    }
+    
+    For cpu_utilization and memory_utilization, each item has a 'value' key with the percentage.
+    Some metrics may use different keys like 'avg', 'percent', etc.
+    """
     if not data:
         return []
+    
+    # Time fields to skip when extracting numeric values
+    TIME_FIELDS = {"time", "timestamp", "start", "start_time", "end", "end_time", 
+                   "bucket_start", "bucket_end", "completed_at", "created_at"}
     
     # Handle different response formats
     values = []
     
     if isinstance(data, dict):
-        # Check for nested data structure
-        if "data" in data:
+        # Portal API standard format: items list
+        if "items" in data and isinstance(data["items"], list):
+            items = data["items"]
+        # Fallback: check for other nested structures
+        elif "data" in data:
             items = data["data"]
         elif "results" in data:
             items = data["results"]
@@ -754,17 +881,43 @@ def _extract_telemetry_values(data: Any) -> List[float]:
     else:
         return []
     
-    # Extract numeric values
+    # Extract numeric values from items
     for item in items:
         if isinstance(item, dict):
-            # Try common value keys
-            for key in ["value", "avg", "average", "mean", "percent", "utilization", "max"]:
+            # First try known value keys in order of likelihood
+            # Note: cpu_utilization uses 'cpu_usage', memory uses 'value', 
+            # load_average uses 'one_minute_load_average', 'five_minute_load_average', etc.
+            # We prefer fifteen_minute_load_average for more stable load measurement
+            found = False
+            for key in ["value", "cpu_usage", "memory_usage", 
+                        "fifteen_minute_load_average", "five_minute_load_average", "one_minute_load_average",
+                        "load_15min", "load_5min", "load_1min",
+                        "avg", "average", "mean", "percent", "utilization", "max"]:
                 if key in item:
                     try:
-                        values.append(float(item[key]))
+                        val = float(item[key])
+                        values.append(val)
+                        found = True
                         break
                     except (ValueError, TypeError):
                         pass
+            
+            # If no known key found, try ALL numeric fields (excluding time fields)
+            if not found:
+                for key, val in item.items():
+                    if key.lower() in TIME_FIELDS:
+                        continue
+                    try:
+                        # Skip booleans
+                        if isinstance(val, bool):
+                            continue
+                        numeric_val = float(val)
+                        values.append(numeric_val)
+                        # Only take first numeric value per item
+                        break
+                    except (ValueError, TypeError):
+                        pass
+                        
         elif isinstance(item, (int, float)):
             values.append(float(item))
     
@@ -897,6 +1050,7 @@ class TCOAnalyzer:
         appliance_name: str = "",
         analysis_period_hours: int = 720,  # Default to 30 days for better baseline
         memory_gib: Optional[float] = None,  # Memory in GiB for requirements check
+        utilization_data_available: bool = True,  # False if telemetry API failed or returned no data
     ) -> TCOAnalysisResult:
         """Analyze an appliance and provide TCO with recommendations.
         
@@ -913,6 +1067,7 @@ class TCOAnalyzer:
             appliance_name: Appliance name/description
             analysis_period_hours: Hours of telemetry data analyzed (default 720 = 30 days)
             memory_gib: Actual memory in GiB (for requirements check)
+            utilization_data_available: Whether real telemetry data was available
         """
         # Detect provider
         provider = self.detect_provider(instance_type)
@@ -968,6 +1123,7 @@ class TCOAnalyzer:
             load_per_cpu=analysis_load_per_cpu,  # Use peak for analysis
             current_pricing=pricing,
             min_requirements_check=min_requirements_check,
+            utilization_data_available=utilization_data_available,
         )
         
         return TCOAnalysisResult(
@@ -993,6 +1149,7 @@ class TCOAnalyzer:
             min_requirements_check=min_requirements_check,
             recommendation=recommendation,
             analysis_period_hours=analysis_period_hours,
+            utilization_data_available=utilization_data_available,
         )
     
     def _generate_recommendation(
@@ -1005,14 +1162,31 @@ class TCOAnalyzer:
         load_per_cpu: float,
         current_pricing: InstancePricing,
         min_requirements_check: Optional[MinimumRequirementsCheck] = None,
+        utilization_data_available: bool = True,
     ) -> RightSizingRecommendation:
         """Generate a right-sizing recommendation based on utilization.
         
         Takes into account Nasuni minimum requirements when making recommendations.
         Will not recommend downsizing if it would put the appliance below minimum specs.
         Will flag appliances that are already below minimum requirements.
+        Will not recommend downsizing if utilization data is not available.
         """
         t = self.thresholds
+        
+        # If no utilization data is available, don't make recommendations based on it
+        if not utilization_data_available:
+            return RightSizingRecommendation(
+                action="unknown",
+                confidence="none",
+                reason="Cannot determine right-sizing recommendation: utilization telemetry data not available. "
+                       "Verify the appliance is online and has telemetry enabled.",
+                current_instance=instance_type,
+                recommended_instance=instance_type,
+                current_monthly_cost=current_pricing.monthly_price,
+                recommended_monthly_cost=current_pricing.monthly_price,
+                monthly_savings=0.0,
+                yearly_savings=0.0,
+            )
         
         # Analyze each metric
         cpu_status = self._analyze_metric(avg_cpu, t.cpu_underutilized, t.cpu_overutilized)
@@ -1253,6 +1427,9 @@ Note: Requires the appliance to be deployed on AWS EC2 or Azure VM with vm_insta
             # Extract hardware specs for minimum requirements check
             memory_gib = parse_ram_to_gib(machine.ram) if machine else None
             
+            # Extract version for smart memory metric selection
+            appliance_version = edge_details.build.current if edge_details.build else None
+            
             if not instance_type:
                 return self.format_error(
                     f"Edge appliance does not have vm_instance_type configured. "
@@ -1262,8 +1439,13 @@ Note: Requires the appliance to be deployed on AWS EC2 or Azure VM with vm_insta
             
             # Get utilization metrics using serial number (30 days default)
             utilization = await get_appliance_utilization_metrics(
-                telemetry_api, serial_number, time_range_hours
+                telemetry_api, serial_number, time_range_hours, appliance_version
             )
+            
+            # Check if utilization data was available
+            utilization_data_available = utilization.get("data_available", True)
+            if not utilization_data_available:
+                logger.warning(f"Telemetry data not available for {edge_name} ({serial_number}): {utilization.get('error', 'Unknown error')}")
             
             # Perform TCO analysis
             pricing_client = get_pricing_client()
@@ -1282,6 +1464,7 @@ Note: Requires the appliance to be deployed on AWS EC2 or Azure VM with vm_insta
                 appliance_name=edge_name,
                 analysis_period_hours=time_range_hours,
                 memory_gib=memory_gib,
+                utilization_data_available=utilization_data_available,
             )
             
             # Return formatted text report for direct LLM consumption
@@ -1406,6 +1589,9 @@ Note: This tool fetches VM instance type from detailed edge data, not the list e
                     # Extract hardware specs for minimum requirements check
                     memory_gib = parse_ram_to_gib(machine.ram) if machine else None
                     
+                    # Extract version for smart memory metric selection
+                    appliance_version = edge_details.build.current if edge_details.build else None
+                    
                     if not instance_type:
                         # Supported platform but no VM instance type info
                         non_cloud_appliances.append(f"{edge_name} (no instance type)")
@@ -1419,8 +1605,13 @@ Note: This tool fetches VM instance type from detailed edge data, not the list e
                     
                     # Get utilization (30 days default for better baseline)
                     utilization = await get_appliance_utilization_metrics(
-                        telemetry_api, serial_number, time_range_hours
+                        telemetry_api, serial_number, time_range_hours, appliance_version
                     )
+                    
+                    # Check if utilization data was available
+                    utilization_data_available = utilization.get("data_available", True)
+                    if not utilization_data_available:
+                        logger.warning(f"Telemetry data not available for {edge_name} ({serial_number}): {utilization.get('error', 'Unknown error')}")
                     
                     # Analyze
                     result = await analyzer.analyze_appliance(
@@ -1436,6 +1627,7 @@ Note: This tool fetches VM instance type from detailed edge data, not the list e
                         appliance_name=edge_name,
                         analysis_period_hours=time_range_hours,
                         memory_gib=memory_gib,
+                        utilization_data_available=utilization_data_available,
                     )
                     results.append(result)
                     
