@@ -964,8 +964,28 @@ class GetVolumeHealthReportTool(BaseVolumeTelemetryTool):
             report.append("")
             
         else:
-            report.append("\n  ⚠️ No protection data available for this period")
-            report.append("  Try extending the period (e.g., P2D, P4D)")
+            # No protection data - but check if propagation shows activity
+            has_propagation_activity = (
+                propagation_analysis and 
+                propagation_analysis.events and 
+                len(propagation_analysis.events) > 0
+            )
+            
+            if has_propagation_activity:
+                # Propagation shows snapshots ARE being created, so protection IS happening
+                prop_stats = propagation_analysis.get_statistics()
+                latest_ver = prop_stats.get("latest_version", {})
+                report.append("\n  ℹ️ Protection timing metrics not available for this period")
+                report.append("  However, propagation data confirms snapshots ARE being created:")
+                if latest_ver:
+                    report.append(f"    • Latest Version: {latest_ver.get('version', 'N/A')}")
+                    report.append(f"    • Created By: {latest_ver.get('created_by', 'N/A')}")
+                    report.append(f"    • Created At: {latest_ver.get('created_at', 'N/A')}")
+                report.append("  Protection is working - detailed timing metrics may require a longer period (P2D-P4D)")
+            else:
+                report.append("\n  ⚠️ No protection data available for this period")
+                report.append("  This may indicate low volume activity or infrequent snapshots")
+                report.append("  Try extending the period (e.g., P2D, P4D)")
             report.append("")
         
         # ================================================================
