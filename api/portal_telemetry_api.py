@@ -137,6 +137,7 @@ APPLIANCE_TELEMETRY_CONFIG: Dict[str, Dict[str, Any]] = {
 
 
 VOLUME_TELEMETRY_CONFIG: Dict[str, Dict[str, Any]] = {
+    # Public Portal API v0.1.0 endpoints - https://am1.portal.api.nasuni.com
     "lock_utilization": {
         "path": "lock_utilization",
         "display_name": "Core Protection",
@@ -254,11 +255,14 @@ class PortalVolumeTelemetryAPIClient(PortalBaseAPIClient):
         volume_guid: str,
         metric: str,
         serial_numbers: List[str],
-        period: str = "PT3H",
+        period: str = "P1D",
         chart_width: Optional[int] = None,
         smart_sampling: Optional[bool] = True,
     ) -> Dict[str, Any]:
-        """Fetch a telemetry metric for a Portal volume."""
+        """Fetch a telemetry metric for a Portal volume.
+        
+        Note: Maximum period for volume telemetry is 4 days (P4D).
+        """
         metric_key = metric.strip().lower()
         if metric_key not in VOLUME_TELEMETRY_CONFIG:
             raise ValueError(f"Unsupported volume telemetry metric: {metric}")
@@ -349,13 +353,17 @@ class PortalVolumeTelemetryAPIClient(PortalBaseAPIClient):
         self,
         volume_guid: str,
         serial_numbers: List[str],
-        period: str = "PT3H",
+        period: str = "P1D",
         smart_sampling: bool = True,
         chart_width: int = 1000,
     ) -> Dict[str, Any]:
-        """Fetch raw data protection snapshots (data_propagation_raw endpoint)."""
+        """Fetch raw data protection snapshots (snapshot_details endpoint).
+        
+        Uses the standard VolumeTelemetryRequestDto payload per Portal API v0.1.0 spec.
+        Note: Maximum period for volume telemetry is 4 days (P4D).
+        """
         self._require_serial_numbers(serial_numbers)
-        endpoint = f"/telemetry/volumes/{volume_guid}/data_propagation_raw"
+        endpoint = f"/telemetry/volumes/{volume_guid}/snapshot_details"
         payload = self._build_volume_payload(
             serial_numbers=serial_numbers,
             period=period,
@@ -373,17 +381,20 @@ class PortalVolumeTelemetryAPIClient(PortalBaseAPIClient):
         )
 
         response = await self.post(endpoint, json=payload)
-        self._log_volume_metric_response("data_protection_raw", response)
+        self._log_volume_metric_response("snapshot_details", response)
         return response
 
     async def get_volume_data_protection_analysis(
         self,
         volume_guid: str,
         serial_numbers: List[str],
-        period: str = "PT3H",
+        period: str = "P1D",
         smart_sampling: bool = True,
     ) -> DataProtectionAnalysis:
-        """Parse data protection telemetry into DataProtectionAnalysis."""
+        """Parse data protection telemetry into DataProtectionAnalysis.
+        
+        Note: Maximum period for volume telemetry is 4 days (P4D).
+        """
         response = await self.get_volume_data_protection(
             volume_guid=volume_guid,
             serial_numbers=serial_numbers,
@@ -416,11 +427,14 @@ class PortalVolumeTelemetryAPIClient(PortalBaseAPIClient):
         self,
         volume_guid: str,
         serial_numbers: List[str],
-        period: str = "PT3H",
+        period: str = "P1D",
         smart_sampling: bool = True,
         chart_width: int = 1000,
     ) -> Dict[str, Any]:
-        """Fetch data propagation timing (snapshot_propagation_by_appliance endpoint)."""
+        """Fetch data propagation timing (snapshot_propagation_by_appliance endpoint).
+        
+        Note: Maximum period for volume telemetry is 4 days (P4D).
+        """
         self._require_serial_numbers(serial_numbers)
         endpoint = f"/telemetry/volumes/{volume_guid}/snapshot_propagation_by_appliance"
         payload = self._build_volume_payload(
@@ -438,10 +452,13 @@ class PortalVolumeTelemetryAPIClient(PortalBaseAPIClient):
         self,
         volume_guid: str,
         serial_numbers: List[str],
-        period: str = "PT3H",
+        period: str = "P1D",
         smart_sampling: bool = True,
     ) -> DataPropagationAnalysis:
-        """Parse propagation telemetry into DataPropagationAnalysis."""
+        """Parse propagation telemetry into DataPropagationAnalysis.
+        
+        Note: Maximum period for volume telemetry is 4 days (P4D).
+        """
         response = await self.get_volume_data_propagation(
             volume_guid=volume_guid,
             serial_numbers=serial_numbers,
@@ -478,11 +495,14 @@ class PortalVolumeTelemetryAPIClient(PortalBaseAPIClient):
         self,
         volume_guid: str,
         serial_numbers: List[str],
-        period: str = "PT3H",
+        period: str = "P1D",
         smart_sampling: bool = True,
         chart_width: int = 1000,
     ) -> Dict[str, Any]:
-        """Fetch snapshot timeline data for a volume."""
+        """Fetch snapshot timeline data for a volume.
+        
+        Note: Maximum period for volume telemetry is 4 days (P4D).
+        """
         self._require_serial_numbers(serial_numbers)
         endpoint = f"/telemetry/volumes/{volume_guid}/snapshot_timeline"
         payload = self._build_volume_payload(
@@ -500,10 +520,13 @@ class PortalVolumeTelemetryAPIClient(PortalBaseAPIClient):
         self,
         volume_guid: str,
         serial_numbers: List[str],
-        period: str = "PT3H",
+        period: str = "P1D",
         smart_sampling: bool = True,
     ) -> SnapshotTimelineAnalysis:
-        """Parse snapshot timeline telemetry into SnapshotTimelineAnalysis."""
+        """Parse snapshot timeline telemetry into SnapshotTimelineAnalysis.
+        
+        Note: Maximum period for volume telemetry is 4 days (P4D).
+        """
         response = await self.get_volume_snapshot_timeline(
             volume_guid=volume_guid,
             serial_numbers=serial_numbers,

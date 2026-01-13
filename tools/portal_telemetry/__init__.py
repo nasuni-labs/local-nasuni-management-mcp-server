@@ -29,6 +29,9 @@ Usage:
 from tools.portal_telemetry.volume_tools import (
     PortalVolumeTelemetryTool,
     GetVolumeProtectionMetricsTool,
+    GetVolumeDataProtectionReportTool,
+    GetVolumeHealthReportTool,
+    GetFleetVolumeHealthSummaryTool,
     CompareVolumeProtectionMetricsTool,
     GetEndToEndProtectionTimingTool,
     GetVolumePropagationMetricsTool,
@@ -59,6 +62,9 @@ __all__ = [
     # Volume data tools
     "PortalVolumeTelemetryTool",
     "GetVolumeProtectionMetricsTool",
+    "GetVolumeDataProtectionReportTool",
+    "GetVolumeHealthReportTool",
+    "GetFleetVolumeHealthSummaryTool",
     "CompareVolumeProtectionMetricsTool",
     "GetEndToEndProtectionTimingTool",
     "GetVolumePropagationMetricsTool",

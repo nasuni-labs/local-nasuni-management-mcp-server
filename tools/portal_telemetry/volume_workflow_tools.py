@@ -107,8 +107,9 @@ class VolumeProtectionReportWorkflowTool(BaseTool):
             name="workflow_volume_protection_report",
             description=(
                 "Get a 5-step workflow for volume protection health report. "
-                "USE THIS when user asks for: protection report, protection health report, "
-                "volume protection analysis, sync analysis, propagation report. "
+                "NOTE: For a quick Data Protection Report with server-side aggregation, "
+                "use 'get_volume_data_protection_report' instead - it's faster and prevents token overflow. "
+                "USE THIS workflow when you need the full multi-step analysis including propagation and sync. "
                 "Returns steps covering protection, timeline, propagation, sync status, and activity."
             ),
         )

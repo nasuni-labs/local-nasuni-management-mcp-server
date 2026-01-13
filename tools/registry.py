@@ -188,13 +188,40 @@ class ToolRegistry:
     def register_portal_protection_metrics_tools(self, portal_client, integration_helper):
         from tools.portal_telemetry import (
             GetVolumeProtectionMetricsTool,
+            GetVolumeDataProtectionReportTool,
             CompareVolumeProtectionMetricsTool,
         )
         
         self.register_tool(GetVolumeProtectionMetricsTool(portal_client, integration_helper))
+        self.register_tool(GetVolumeDataProtectionReportTool(portal_client, integration_helper))
         self.register_tool(CompareVolumeProtectionMetricsTool(portal_client, integration_helper))
         
-        print("✅ Registered 2 Portal protection metrics tools (TELEMETRY)", file=sys.stderr)
+        print("✅ Registered 3 Portal protection metrics tools (TELEMETRY)", file=sys.stderr)
+
+    def register_volume_health_report_tool(self, protection_client, propagation_client, integration_helper):
+        """Register the comprehensive volume health report tool (Protection + Propagation)."""
+        from tools.portal_telemetry import GetVolumeHealthReportTool
+        
+        self.register_tool(GetVolumeHealthReportTool(
+            protection_client=protection_client,
+            propagation_client=propagation_client,
+            integration_helper=integration_helper,
+        ))
+        
+        print("✅ Registered volume health report tool (Protection + Propagation)", file=sys.stderr)
+
+    def register_fleet_volume_health_tool(self, protection_client, volumes_client, edges_client, integration_helper):
+        """Register the fleet-wide volume health summary tool."""
+        from tools.portal_telemetry import GetFleetVolumeHealthSummaryTool
+        
+        self.register_tool(GetFleetVolumeHealthSummaryTool(
+            protection_client=protection_client,
+            volumes_client=volumes_client,
+            edges_client=edges_client,
+            integration_helper=integration_helper,
+        ))
+        
+        print("✅ Registered fleet volume health summary tool", file=sys.stderr)
     
     
     def register_portal_propagation_metrics_tools(self, propagation_client, integration_helper):

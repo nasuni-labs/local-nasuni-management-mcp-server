@@ -149,13 +149,32 @@ class MCPServer:
                             portal_auth_client,
                         )
                         print("✅ Created Portal volume telemetry client (protection + propagation)", file=sys.stderr)
+
+                        # Create Portal Edge client (needed for integration helper)
+                        from api.portal_edges_api import PortalEdgesAPIClient
+                        portal_edges_client = PortalEdgesAPIClient(
+                            config.portal_config,
+                            portal_auth_client,
+                        )
+                        print("✅ Created Portal edges client", file=sys.stderr)
+
+                        # Create Portal Volume client (needed for integration helper)
+                        from api.portal_volumes_api import PortalVolumesAPIClient
+                        portal_volumes_client = PortalVolumesAPIClient(
+                            config.portal_config,
+                            portal_auth_client,
+                        )
+                        print("✅ Created Portal volumes client", file=sys.stderr)
                         
-                        # Create integration helper
+                        # Create integration helper with both NMC and Portal clients
+                        # Portal clients enable direct Portal lookups for volumes not in NMC
                         integration_helper = NMCPortalIntegration(
                             volumes_client=volumes_client,
-                            filers_client=filers_client
+                            filers_client=filers_client,
+                            portal_volumes_client=portal_volumes_client,
+                            portal_edges_client=portal_edges_client
                         )
-                        print("✅ Created NMC-Portal integration helper", file=sys.stderr)
+                        print("✅ Created NMC-Portal integration helper (Portal-first enabled)", file=sys.stderr)
                         
                         # Register protection metrics tools
                         self.tool_registry.register_portal_protection_metrics_tools(
@@ -175,6 +194,13 @@ class MCPServer:
                             portal_volume_telemetry_client,
                             integration_helper
                         )
+                        
+                        # Register comprehensive volume health report tool (Protection + Propagation)
+                        self.tool_registry.register_volume_health_report_tool(
+                            protection_client=portal_volume_telemetry_client,
+                            propagation_client=portal_volume_telemetry_client,
+                            integration_helper=integration_helper,
+                        )
 
                         # Register Ops IQ telemetry explorer tools
                         self.tool_registry.register_portal_telemetry_tools(
@@ -183,29 +209,27 @@ class MCPServer:
                             integration_helper,
                         )
 
-                        # Register Portal Edge tools (detailed hardware info)
-                        from api.portal_edges_api import PortalEdgesAPIClient
-                        portal_edges_client = PortalEdgesAPIClient(
-                            config.portal_config,
-                            portal_auth_client,
-                        )
-                        print("✅ Created Portal edges client", file=sys.stderr)
-                        
+                        # Register Portal Edge tools
                         self.tool_registry.register_portal_edge_tools(
                             portal_edges_client,
                             integration_helper,
                         )
 
-                        # Register Portal Volume tools (volume information)
-                        from api.portal_volumes_api import PortalVolumesAPIClient
-                        portal_volumes_client = PortalVolumesAPIClient(
-                            config.portal_config,
-                            portal_auth_client,
+                        # Register Portal Volume tools
+                        self.tool_registry.register_portal_volume_tools(
+                            portal_volumes_client,
                         )
-                        print("✅ Created Portal volumes client", file=sys.stderr)
                         
                         self.tool_registry.register_portal_volume_tools(
                             portal_volumes_client,
+                        )
+
+                        # Register fleet-wide volume health summary tool
+                        self.tool_registry.register_fleet_volume_health_tool(
+                            protection_client=portal_volume_telemetry_client,
+                            volumes_client=portal_volumes_client,
+                            edges_client=portal_edges_client,
+                            integration_helper=integration_helper,
                         )
 
                         # Register TCO (Total Cost of Ownership) analysis tools

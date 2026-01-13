@@ -14,6 +14,7 @@ This module provides tools for volume-focused telemetry operations:
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Dict, List, Tuple
 
 from mcp.types import TextContent
@@ -488,6 +489,1070 @@ class GetVolumeProtectionMetricsTool(BaseVolumeTelemetryTool):
 
         out += "\n📊 Portal Ops IQ - Real-time protection telemetry\n"
         return out
+
+
+class GetVolumeDataProtectionReportTool(BaseVolumeTelemetryTool):
+    """Generate a comprehensive Data Protection Report with server-side aggregation.
+    
+    This tool fetches all protection data and performs aggregations server-side
+    to prevent token overflow for large volumes. Returns a compact, pre-formatted
+    report with the key metrics.
+    """
+
+    def __init__(
+        self,
+        api_client: PortalVolumeTelemetryAPIClient,
+        integration_helper: NMCPortalIntegration,
+    ):
+        super().__init__(
+            name="get_volume_data_protection_report",
+            description=(
+                "[PORTAL] Generate a comprehensive Data Protection Report for a volume. "
+                "USE THIS for data protection reports - it performs all aggregations server-side "
+                "to prevent token overflow. Returns: Time to Protect (min/max/avg), "
+                "Latest Snapshot details (version, OUD, appliance, file/dir counts), "
+                "and Appliance snapshot distribution (most/least active). "
+                "Starts with last 24 hours (P1D) by default - can scale up to P4D if more data needed. "
+                "Accepts volume name or GUID."
+            ),
+            integration_helper=integration_helper,
+            protection_client=api_client,
+        )
+
+    def get_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "volume": VOLUME_PROPERTY,
+                "period": {
+                    "type": "string",
+                    "description": "Time period for analysis (ISO 8601). Default: P1D (1 day). Max: P4D (4 days). Examples: PT12H, P1D, P4D",
+                    "default": "P1D",
+                },
+            },
+            "required": ["volume"],
+        }
+
+    async def _do_execute(self, arguments: Dict[str, Any]) -> List[TextContent]:
+        volume_id = arguments.get("volume", "").strip()
+        if not volume_id:
+            return self.format_error("Volume name or GUID required")
+
+        period = arguments.get("period", "P1D")
+
+        volume_guid, serials = await self._resolve_volume(volume_id)
+        logger.info(f"Generating Data Protection Report for {volume_id} with {len(serials)} filer(s)")
+
+        # Fetch protection data with smart_sampling disabled for accurate stats
+        analysis = await self.protection_client.get_volume_data_protection_analysis(
+            volume_guid=volume_guid,
+            serial_numbers=serials,
+            period=period,
+            smart_sampling=False,  # Need all data for accurate min/max/avg
+        )
+
+        if not analysis.complete_snapshots:
+            return [
+                TextContent(
+                    type="text",
+                    text=f"No protection data available for volume '{volume_id}' in period {period}",
+                )
+            ]
+
+        # Generate the compact report
+        report = self._generate_report(volume_id, volume_guid, period, analysis)
+        return [TextContent(type="text", text=report)]
+
+    def _generate_report(
+        self,
+        vol_id: str,
+        vol_guid: str,
+        period: str,
+        analysis,
+    ) -> str:
+        """Generate a compact Data Protection Report."""
+        stats = analysis.get_statistics()
+        snapshots = analysis.complete_snapshots
+        
+        # ==== HEADER ====
+        report = [
+            "=" * 60,
+            "📊 DATA PROTECTION REPORT",
+            "=" * 60,
+            f"Volume: {vol_id}",
+            f"GUID: {vol_guid}",
+            f"Analysis Period: {period}",
+            f"Total Snapshots Analyzed: {len(snapshots)}",
+            f"Time Range: {stats['time_range']['start']} → {stats['time_range']['end']}",
+            "",
+        ]
+        
+        # ==== TIME TO PROTECT (Min/Max/Avg) ====
+        protect_times = [s.protect_mean_seconds for s in snapshots if s.protect_mean_seconds is not None]
+        
+        report.append("=" * 60)
+        report.append("⏱️  TIME TO PROTECT (Data Protection Latency)")
+        report.append("=" * 60)
+        
+        if protect_times:
+            min_protect = min(protect_times)
+            max_protect = max(protect_times)
+            avg_protect = sum(protect_times) / len(protect_times)
+            
+            report.append(f"  Minimum:  {self._fmt(min_protect)}")
+            report.append(f"  Maximum:  {self._fmt(max_protect)}")
+            report.append(f"  Average:  {self._fmt(avg_protect)}")
+            report.append("")
+            
+            # Health assessment
+            if avg_protect < 60:
+                report.append("  Status: ✅ EXCELLENT - Files protected quickly")
+            elif avg_protect < 180:
+                report.append("  Status: ✅ GOOD - Protection time within normal range")
+            elif avg_protect < 600:
+                report.append("  Status: ⚠️ WARNING - Consider increasing snapshot frequency")
+            else:
+                report.append("  Status: 🚨 CRITICAL - Files remain unprotected too long")
+        else:
+            report.append("  No time-to-protect data available")
+        
+        report.append("")
+        
+        # ==== LATEST SNAPSHOT DETAILS ====
+        report.append("=" * 60)
+        report.append("📌 LATEST SNAPSHOT DETAILS")
+        report.append("=" * 60)
+        
+        latest = analysis.latest_snapshot
+        if latest:
+            report.append(f"  Snapshot Number (Version): {latest.volume_version}")
+            report.append(f"  Completed At: {latest.timestamp_str}")
+            report.append(f"  OUD (Oldest Unprotected Data): {self._fmt(latest.oud_seconds)}")
+            report.append(f"  Appliance: {latest.appliance}")
+            report.append(f"  Serial: {latest.serial_number}")
+            report.append(f"  Total Files: {latest.file_count_total or 0:,}")
+            report.append(f"  Directory Count: {latest.dir_count or 0:,}")
+            report.append(f"  Time to Protect (Mean): {self._fmt(latest.protect_mean_seconds)}")
+            report.append(f"  Time to Protect (Max): {self._fmt(latest.protect_max_seconds)}")
+            
+            if latest.has_global_locks:
+                report.append(f"  Global File Lock Files: {latest.file_count_gl or 0:,}")
+        else:
+            report.append("  No latest snapshot data available")
+        
+        report.append("")
+        
+        # ==== APPLIANCE SNAPSHOT DISTRIBUTION ====
+        report.append("=" * 60)
+        report.append("📡 APPLIANCE SNAPSHOT DISTRIBUTION")
+        report.append("=" * 60)
+        
+        by_appliance = stats.get("by_appliance", {})
+        
+        if by_appliance:
+            # Sort by snapshot count
+            sorted_appliances = sorted(
+                by_appliance.items(),
+                key=lambda x: x[1].get("snapshots", 0),
+                reverse=True
+            )
+            
+            # Table header
+            report.append("")
+            report.append(f"  {'Appliance':<25} {'Snapshots':>10} {'% Total':>10} {'Avg Protect':>12}")
+            report.append(f"  {'-' * 25} {'-' * 10} {'-' * 10} {'-' * 12}")
+            
+            total_snapshots = len(snapshots)
+            for appliance, app_stats in sorted_appliances:
+                snap_count = app_stats.get("snapshots", 0)
+                pct = (snap_count / total_snapshots * 100) if total_snapshots > 0 else 0
+                avg_protect = app_stats.get("avg_protect_time", "N/A")
+                
+                # Truncate long appliance names
+                display_name = appliance[:25] if len(appliance) > 25 else appliance
+                report.append(f"  {display_name:<25} {snap_count:>10} {pct:>9.1f}% {avg_protect:>12}")
+            
+            report.append("")
+            
+            # Most active appliance
+            most_active = sorted_appliances[0]
+            most_name = most_active[0]
+            most_count = most_active[1].get("snapshots", 0)
+            most_pct = (most_count / total_snapshots * 100) if total_snapshots > 0 else 0
+            
+            report.append(f"  🥇 Most Active Appliance:")
+            report.append(f"     {most_name}")
+            report.append(f"     {most_count} snapshots ({most_pct:.1f}% of total)")
+            report.append("")
+            
+            # Least active appliance
+            if len(sorted_appliances) > 1:
+                least_active = sorted_appliances[-1]
+                least_name = least_active[0]
+                least_count = least_active[1].get("snapshots", 0)
+                least_pct = (least_count / total_snapshots * 100) if total_snapshots > 0 else 0
+                
+                report.append(f"  📉 Least Active Appliance:")
+                report.append(f"     {least_name}")
+                report.append(f"     {least_count} snapshots ({least_pct:.1f}% of total)")
+                report.append("")
+            
+            # Distribution balance assessment
+            if len(sorted_appliances) > 1:
+                if most_pct > 70:
+                    report.append("  ⚠️ Distribution: UNEVEN - One appliance dominates snapshot creation")
+                elif most_pct > 50 and len(sorted_appliances) > 2:
+                    report.append("  ⚠️ Distribution: SLIGHTLY SKEWED")
+                else:
+                    report.append("  ✅ Distribution: BALANCED - Workload spread across appliances")
+        else:
+            report.append("  No per-appliance data available")
+        
+        report.append("")
+        
+        # ==== OUD STATISTICS ====
+        oud_values = [s.oud_seconds for s in snapshots if s.oud_seconds is not None]
+        
+        if oud_values:
+            report.append("=" * 60)
+            report.append("📈 OUD (Oldest Unprotected Data) STATISTICS")
+            report.append("=" * 60)
+            report.append(f"  Minimum OUD: {self._fmt(min(oud_values))}")
+            report.append(f"  Maximum OUD: {self._fmt(max(oud_values))}")
+            report.append(f"  Average OUD: {self._fmt(sum(oud_values) / len(oud_values))}")
+            report.append("")
+            
+            avg_oud = sum(oud_values) / len(oud_values)
+            if avg_oud < 3600:  # Less than 1 hour
+                report.append("  Status: ✅ GOOD - Data protection is timely")
+            elif avg_oud < 14400:  # Less than 4 hours
+                report.append("  Status: ⚠️ WARNING - OUD exceeds 1 hour average")
+            else:
+                report.append("  Status: 🚨 CRITICAL - OUD exceeds 4 hours average")
+            report.append("")
+        
+        # ==== FOOTER ====
+        report.append("=" * 60)
+        report.append("📊 Report generated from Portal Ops IQ telemetry")
+        report.append("=" * 60)
+        
+        return "\n".join(report)
+    
+    def _fmt(self, seconds: float | None) -> str:
+        """Format duration in human-readable format."""
+        if seconds is None:
+            return "N/A"
+        if seconds < 60:
+            return f"{seconds:.1f}s"
+        elif seconds < 3600:
+            return f"{seconds / 60:.1f}m"
+        else:
+            return f"{seconds / 3600:.2f}h"
+
+
+class GetVolumeHealthReportTool(BaseVolumeTelemetryTool):
+    """Comprehensive Volume Health Report with Data Protection AND Data Propagation metrics.
+    
+    This tool provides a complete health picture for a single volume including:
+    - Data Protection: Time to protect (min/max/avg), latest snapshot details
+    - Data Propagation: Time to propagate (min/max/avg), sync status per appliance
+    - Appliance analysis: Most/least active for snapshots, stale appliances for sync
+    """
+
+    def __init__(
+        self,
+        protection_client: PortalVolumeTelemetryAPIClient,
+        propagation_client: PortalVolumeTelemetryAPIClient,
+        integration_helper: NMCPortalIntegration,
+    ):
+        super().__init__(
+            name="get_volume_health_report",
+            description=(
+                "[PORTAL] Generate a comprehensive Volume Health Report with both "
+                "Data Protection AND Data Propagation metrics. "
+                "Returns: Time to Protect (min/max/avg), Latest Snapshot details "
+                "(version, OUD, appliance, file/dir counts), Appliance snapshot distribution, "
+                "Time to Propagate (min/max/avg), Latest synced version per appliance, "
+                "and identifies appliances that are behind (version -100 or more). "
+                "Starts with last 24 hours (P1D) by default - can scale up to P4D if more data needed. "
+                "USE THIS for complete volume health analysis. Accepts volume name or GUID."
+            ),
+            integration_helper=integration_helper,
+            protection_client=protection_client,
+            propagation_client=propagation_client,
+        )
+
+    def get_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "volume": VOLUME_PROPERTY,
+                "period": {
+                    "type": "string",
+                    "description": "Time period for analysis (ISO 8601). Default: P1D (1 day). Max: P4D (4 days). Examples: PT12H, P1D, P4D",
+                    "default": "P1D",
+                },
+            },
+            "required": ["volume"],
+        }
+
+    async def _do_execute(self, arguments: Dict[str, Any]) -> List[TextContent]:
+        volume_id = arguments.get("volume", "").strip()
+        if not volume_id:
+            return self.format_error("Volume name or GUID required")
+
+        period = arguments.get("period", "P1D")
+
+        volume_guid, serials = await self._resolve_volume(volume_id)
+        logger.info(f"Generating Volume Health Report for {volume_id} with {len(serials)} filer(s)")
+
+        # Fetch BOTH protection and propagation data concurrently
+        protection_task = self.protection_client.get_volume_data_protection_analysis(
+            volume_guid=volume_guid,
+            serial_numbers=serials,
+            period=period,
+            smart_sampling=False,  # Need all data for accurate min/max/avg
+        )
+        
+        propagation_task = self.propagation_client.get_volume_data_propagation_analysis(
+            volume_guid=volume_guid,
+            serial_numbers=serials,
+            period=period,
+            smart_sampling=False,
+        )
+        
+        protection_analysis, propagation_analysis = await asyncio.gather(
+            protection_task, propagation_task, return_exceptions=True
+        )
+        
+        # Handle exceptions
+        if isinstance(protection_analysis, Exception):
+            logger.error(f"Protection analysis failed: {protection_analysis}")
+            protection_analysis = None
+        if isinstance(propagation_analysis, Exception):
+            logger.error(f"Propagation analysis failed: {propagation_analysis}")
+            propagation_analysis = None
+
+        # Generate the comprehensive report
+        report = self._generate_report(
+            volume_id, volume_guid, period, serials,
+            protection_analysis, propagation_analysis
+        )
+        return [TextContent(type="text", text=report)]
+
+    def _generate_report(
+        self,
+        vol_id: str,
+        vol_guid: str,
+        period: str,
+        serials: List[str],
+        protection_analysis,
+        propagation_analysis,
+    ) -> str:
+        """Generate a comprehensive Volume Health Report."""
+        
+        # ==== HEADER ====
+        report = [
+            "=" * 70,
+            "📊 VOLUME HEALTH REPORT",
+            "=" * 70,
+            f"Volume: {vol_id}",
+            f"GUID: {vol_guid}",
+            f"Analysis Period: {self._period_to_human(period)}",
+            f"Connected Appliances: {len(serials)}",
+            "",
+        ]
+        
+        # ================================================================
+        # SECTION 1: DATA PROTECTION
+        # ================================================================
+        report.append("=" * 70)
+        report.append("🛡️  DATA PROTECTION")
+        report.append("=" * 70)
+        
+        if protection_analysis and protection_analysis.complete_snapshots:
+            snapshots = protection_analysis.complete_snapshots
+            stats = protection_analysis.get_statistics()
+            
+            report.append(f"\nTotal Snapshots Analyzed: {len(snapshots)}")
+            report.append(f"Time Range: {stats['time_range']['start']} → {stats['time_range']['end']}")
+            report.append("")
+            
+            # ---- TIME TO PROTECT ----
+            report.append("-" * 50)
+            report.append("⏱️  TIME TO PROTECT")
+            report.append("-" * 50)
+            
+            protect_times = [s.protect_mean_seconds for s in snapshots if s.protect_mean_seconds is not None]
+            if protect_times:
+                min_protect = min(protect_times)
+                max_protect = max(protect_times)
+                avg_protect = sum(protect_times) / len(protect_times)
+                
+                report.append(f"  Minimum:  {self._fmt(min_protect)}")
+                report.append(f"  Maximum:  {self._fmt(max_protect)}")
+                report.append(f"  Average:  {self._fmt(avg_protect)}")
+                
+                # Health status
+                if avg_protect < 60:
+                    report.append("  Status: ✅ EXCELLENT")
+                elif avg_protect < 180:
+                    report.append("  Status: ✅ GOOD")
+                elif avg_protect < 600:
+                    report.append("  Status: ⚠️ WARNING")
+                else:
+                    report.append("  Status: 🚨 CRITICAL")
+            else:
+                report.append("  No time-to-protect data available")
+            report.append("")
+            
+            # ---- LATEST SNAPSHOT DETAILS ----
+            report.append("-" * 50)
+            report.append("📌 LATEST SNAPSHOT DETAILS")
+            report.append("-" * 50)
+            
+            latest = protection_analysis.latest_snapshot
+            if latest:
+                report.append(f"  Snapshot Number (Version): {latest.volume_version}")
+                report.append(f"  OUD (Oldest Unprotected Data): {self._fmt(latest.oud_seconds)}")
+                report.append(f"  Appliance: {latest.appliance}")
+                report.append(f"  Total Files: {latest.file_count_total or 0:,}")
+                report.append(f"  Directory Count: {latest.dir_count or 0:,}")
+            else:
+                report.append("  No latest snapshot data available")
+            report.append("")
+            
+            # ---- APPLIANCE SNAPSHOT DISTRIBUTION ----
+            report.append("-" * 50)
+            report.append("📡 APPLIANCE SNAPSHOT DISTRIBUTION")
+            report.append("-" * 50)
+            
+            by_appliance = stats.get("by_appliance", {})
+            if by_appliance:
+                sorted_appliances = sorted(
+                    by_appliance.items(),
+                    key=lambda x: x[1].get("snapshots", 0),
+                    reverse=True
+                )
+                
+                total_snapshots = len(snapshots)
+                
+                # Show table
+                report.append(f"\n  {'Appliance':<30} {'Snapshots':>10} {'% Total':>10}")
+                report.append(f"  {'-' * 30} {'-' * 10} {'-' * 10}")
+                
+                for appliance, app_stats in sorted_appliances:
+                    snap_count = app_stats.get("snapshots", 0)
+                    pct = (snap_count / total_snapshots * 100) if total_snapshots > 0 else 0
+                    display_name = appliance[:30] if len(appliance) > 30 else appliance
+                    report.append(f"  {display_name:<30} {snap_count:>10} {pct:>9.1f}%")
+                
+                report.append("")
+                
+                # Most active
+                most_active = sorted_appliances[0]
+                report.append(f"  🥇 Most Active: {most_active[0]}")
+                report.append(f"     {most_active[1].get('snapshots', 0)} snapshots ({most_active[1].get('snapshots', 0) / total_snapshots * 100:.1f}%)")
+                
+                # Least active
+                if len(sorted_appliances) > 1:
+                    least_active = sorted_appliances[-1]
+                    report.append(f"  📉 Least Active: {least_active[0]}")
+                    report.append(f"     {least_active[1].get('snapshots', 0)} snapshots ({least_active[1].get('snapshots', 0) / total_snapshots * 100:.1f}%)")
+            else:
+                report.append("  No per-appliance data available")
+            report.append("")
+            
+        else:
+            report.append("\n  ⚠️ No protection data available for this period")
+            report.append("  Try extending the period (e.g., P2D, P4D)")
+            report.append("")
+        
+        # ================================================================
+        # SECTION 2: DATA PROPAGATION
+        # ================================================================
+        report.append("=" * 70)
+        report.append("🔄 DATA PROPAGATION")
+        report.append("=" * 70)
+        
+        if propagation_analysis and propagation_analysis.events:
+            events = propagation_analysis.events
+            prop_stats = propagation_analysis.get_statistics()
+            
+            report.append(f"\nTotal Sync Events: {len(events)}")
+            report.append(f"Snapshot Appliances: {', '.join(propagation_analysis.snapshot_appliances) or 'N/A'}")
+            report.append(f"Sync Appliances: {', '.join(propagation_analysis.sync_appliances) or 'N/A'}")
+            report.append("")
+            
+            # ---- TIME TO PROPAGATE ----
+            report.append("-" * 50)
+            report.append("⏱️  TIME TO PROPAGATE")
+            report.append("-" * 50)
+            
+            prop_stats_data = prop_stats.get("propagation_statistics", {})
+            if prop_stats_data:
+                report.append(f"  Minimum:  {prop_stats_data.get('min_time', 'N/A')}")
+                report.append(f"  Maximum:  {prop_stats_data.get('max_time', 'N/A')}")
+                report.append(f"  Average:  {prop_stats_data.get('avg_time', 'N/A')}")
+                
+                avg_sec = prop_stats_data.get("avg_seconds", 0)
+                if avg_sec < 30:
+                    report.append("  Status: ✅ EXCELLENT")
+                elif avg_sec < 60:
+                    report.append("  Status: ✅ GOOD")
+                elif avg_sec < 120:
+                    report.append("  Status: ⚠️ WARNING")
+                else:
+                    report.append("  Status: 🚨 SLOW")
+            else:
+                report.append("  No propagation timing data available")
+            report.append("")
+            
+            # ---- LATEST SNAPSHOT VERSION ----
+            report.append("-" * 50)
+            report.append("📌 LATEST SNAPSHOT VERSION")
+            report.append("-" * 50)
+            
+            latest_version_info = prop_stats.get("latest_version", {})
+            if latest_version_info:
+                report.append(f"  Version: {latest_version_info.get('version', 'N/A')}")
+                report.append(f"  Created By: {latest_version_info.get('created_by', 'N/A')}")
+                report.append(f"  Created At: {latest_version_info.get('created_at', 'N/A')}")
+                report.append(f"  Appliances Synced: {latest_version_info.get('syncs_completed', 0)}")
+                report.append(f"  Avg Propagation: {latest_version_info.get('avg_propagation', 'N/A')}")
+            report.append("")
+            
+            # ---- PER-APPLIANCE SYNC STATUS ----
+            report.append("-" * 50)
+            report.append("📡 APPLIANCE SYNC STATUS")
+            report.append("-" * 50)
+            
+            by_sync_appliance = prop_stats.get("by_sync_appliance", {})
+            latest_version = latest_version_info.get("version", 0)
+            
+            if by_sync_appliance:
+                # Show table header
+                report.append(f"\n  {'Appliance':<30} {'Latest Synced':>14} {'Avg Prop':>12}")
+                report.append(f"  {'-' * 30} {'-' * 14} {'-' * 12}")
+                
+                stale_appliances = []
+                
+                for app_name, app_data in sorted(by_sync_appliance.items()):
+                    app_latest_version = app_data.get("latest_version_synced", 0)
+                    avg_prop = app_data.get("avg_propagation", "N/A")
+                    display_name = app_name[:30] if len(app_name) > 30 else app_name
+                    report.append(f"  {display_name:<30} v{app_latest_version:>13} {avg_prop:>12}")
+                    
+                    # Check if appliance is behind by 100+ versions
+                    version_diff = latest_version - app_latest_version
+                    if version_diff >= 100:
+                        stale_appliances.append({
+                            "appliance": app_name,
+                            "latest_synced": app_latest_version,
+                            "behind_by": version_diff,
+                            "last_sync_time": app_data.get("latest_sync_time", "Unknown")
+                        })
+                
+                report.append("")
+                
+                # ---- APPLIANCES THAT HAVEN'T SYNCED (100+ versions behind) ----
+                if stale_appliances:
+                    report.append("-" * 50)
+                    report.append("🚨 STALE APPLIANCES (100+ versions behind)")
+                    report.append("-" * 50)
+                    
+                    for stale in stale_appliances:
+                        report.append(f"\n  ⚠️ {stale['appliance']}")
+                        report.append(f"     Latest Synced Version: v{stale['latest_synced']}")
+                        report.append(f"     Behind By: {stale['behind_by']} versions")
+                        report.append(f"     Last Sync: {stale['last_sync_time']}")
+                    report.append("")
+                else:
+                    report.append("  ✅ All appliances are up to date (within 100 versions)")
+                    report.append("")
+            else:
+                report.append("  No per-appliance sync data available")
+                report.append("")
+        else:
+            report.append("\n  ⚠️ No propagation data available for this period")
+            report.append("  This may indicate no sync activity or single-appliance volume")
+            report.append("")
+        
+        # ================================================================
+        # FOOTER
+        # ================================================================
+        report.append("=" * 70)
+        report.append("📊 Report generated from Portal Ops IQ telemetry")
+        report.append("=" * 70)
+        
+        return "\n".join(report)
+
+    def _period_to_human(self, period: str) -> str:
+        """Convert ISO 8601 period to human-readable format."""
+        period_map = {
+            "PT1H": "Last 1 hour",
+            "PT3H": "Last 3 hours",
+            "PT6H": "Last 6 hours",
+            "PT12H": "Last 12 hours",
+            "PT24H": "Last 24 hours",
+            "P1D": "Last 24 hours",
+            "P2D": "Last 2 days",
+            "P3D": "Last 3 days",
+            "P4D": "Last 4 days",
+        }
+        return period_map.get(period.upper(), f"Period: {period}")
+
+    def _fmt(self, seconds: float | None) -> str:
+        """Format duration in human-readable format."""
+        if seconds is None:
+            return "N/A"
+        if seconds < 60:
+            return f"{seconds:.1f}s"
+        elif seconds < 3600:
+            return f"{seconds / 60:.1f}m"
+        else:
+            return f"{seconds / 3600:.2f}h"
+
+
+class GetFleetVolumeHealthSummaryTool(BaseTool):
+    """Fleet-wide volume health summary with server-side aggregation.
+    
+    This tool analyzes ALL volumes in the account and identifies any 
+    experiencing health issues. Performs all aggregation server-side
+    to prevent token overflow.
+    
+    Uses Portal APIs directly to get edge connections and serial numbers,
+    avoiding the need for NMC API lookups.
+    """
+
+    def __init__(
+        self,
+        protection_client: PortalVolumeTelemetryAPIClient,
+        volumes_client,  # PortalVolumesAPIClient
+        edges_client,    # PortalEdgesAPIClient - for edge ID to serial mapping
+        integration_helper: NMCPortalIntegration,
+    ):
+        super().__init__(
+            name="get_fleet_volume_health_summary",
+            description=(
+                "[PORTAL - USE THIS FOR FLEET-WIDE VOLUME HEALTH] "
+                "Analyze ALL volumes and identify any experiencing health issues. "
+                "Starts with last 24 hours (P1D) by default - can scale up to P4D if more data needed. "
+                "USE THIS when user asks: 'check all volumes', 'any volume issues?', "
+                "'volume health across fleet', 'which volumes have problems'. "
+                "Returns a compact summary with: healthy volumes, warning volumes, "
+                "critical volumes, and volumes with no recent snapshots. "
+                "Note: Volumes without snapshots in the period may be inactive or have low activity. "
+                "All aggregation done server-side to prevent token overflow."
+            ),
+        )
+        self.protection_client = protection_client
+        self.volumes_client = volumes_client
+        self.edges_client = edges_client
+        self.integration = integration_helper
+
+    def get_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "period": {
+                    "type": "string",
+                    "description": "Time period for analysis (ISO 8601). Default: P1D (1 day), max P4D (4 days). Examples: PT12H, P1D, P4D",
+                    "default": "P1D",
+                },
+            },
+            "required": [],
+        }
+
+    async def _build_edge_serial_map(self) -> Dict[str, str]:
+        """Build a mapping of edge ID to serial number from Portal edges API.
+        
+        Returns:
+            Dict mapping edge_id -> serial_number
+        """
+        edge_map = {}
+        try:
+            edges_response = await self.edges_client.get_edges()
+            if edges_response and edges_response.items:
+                for edge in edges_response.items:
+                    if edge.id and edge.serial:
+                        edge_map[edge.id] = edge.serial
+                logger.info(f"Built edge serial map with {len(edge_map)} entries")
+        except Exception as e:
+            logger.warning(f"Failed to build edge serial map: {e}")
+        return edge_map
+
+    async def _get_volume_serials_from_portal(
+        self, 
+        vol_id: str, 
+        edge_serial_map: Dict[str, str]
+    ) -> List[str]:
+        """Get serial numbers for a volume using Portal APIs.
+        
+        Args:
+            vol_id: Volume ID/GUID
+            edge_serial_map: Mapping of edge_id -> serial
+            
+        Returns:
+            List of serial numbers for connected edges
+        """
+        serials = []
+        try:
+            # Get detailed volume info which includes edges
+            volume_details = await self.volumes_client.get_volume(vol_id)
+            
+            if volume_details and volume_details.edges:
+                edges = volume_details.edges
+                
+                # Get master edge serial
+                if edges.master and edges.master.id:
+                    master_serial = edge_serial_map.get(edges.master.id)
+                    if master_serial:
+                        serials.append(master_serial)
+                        logger.debug(f"Found master edge serial: {master_serial}")
+                
+                # Get connected edge serials
+                for edge_id in edges.connected:
+                    serial = edge_serial_map.get(edge_id)
+                    if serial and serial not in serials:
+                        serials.append(serial)
+                        logger.debug(f"Found connected edge serial: {serial}")
+                        
+        except Exception as e:
+            logger.warning(f"Failed to get volume serials from Portal for {vol_id}: {e}")
+        
+        return serials
+
+    async def _analyze_single_volume(
+        self,
+        volume,
+        edge_serial_map: Dict[str, str],
+        period: str,
+    ) -> Dict[str, Any]:
+        """Analyze a single volume and return result dict.
+        
+        Returns a dict with keys: type ('healthy'|'warning'|'critical'|'no_data'|'error'), data
+        """
+        vol_id = volume.id
+        vol_name = volume.description or vol_id
+        
+        try:
+            # Get filer serials - try Portal first, then fall back to NMC
+            serials = []
+            
+            if edge_serial_map:
+                serials = await self._get_volume_serials_from_portal(vol_id, edge_serial_map)
+            
+            # Fallback to NMC integration if Portal didn't return serials
+            if not serials:
+                serials = await self.integration.get_filer_serials_for_volume(vol_id)
+            
+            if not serials:
+                return {
+                    "type": "no_data",
+                    "data": {"name": vol_name, "id": vol_id, "reason": "No connected filers"}
+                }
+            
+            # Fetch protection data
+            analysis = await self.protection_client.get_volume_data_protection_analysis(
+                volume_guid=vol_id,
+                serial_numbers=serials,
+                period=period,
+                smart_sampling=True,  # Use sampling for speed
+            )
+            
+            if not analysis.complete_snapshots:
+                return {
+                    "type": "no_data",
+                    "data": {
+                        "name": vol_name,
+                        "id": vol_id,
+                        "reason": f"No snapshots in {period} (checked {len(serials)} filer(s))"
+                    }
+                }
+            
+            # Analyze health
+            health_result = self._analyze_volume_health(vol_name, vol_id, analysis)
+            return {"type": health_result["status"], "data": health_result}
+            
+        except Exception as e:
+            logger.warning(f"Error analyzing volume {vol_name}: {e}")
+            return {
+                "type": "error",
+                "data": {"volume": vol_name, "error": str(e)}
+            }
+
+    async def execute(self, arguments: Dict[str, Any]) -> List[TextContent]:
+        period = arguments.get("period", "P1D")
+        
+        try:
+            # Step 1: Build edge ID to serial mapping (one API call)
+            edge_serial_map = await self._build_edge_serial_map()
+            if not edge_serial_map:
+                logger.warning("Edge serial map is empty - falling back to NMC integration")
+            
+            # Step 2: Get all volumes from Portal
+            volumes_response = await self.volumes_client.get_volumes()
+            
+            if not volumes_response or not volumes_response.items:
+                return [TextContent(type="text", text="No volumes found in the account.")]
+            
+            volumes = volumes_response.items
+            logger.info(f"Analyzing health for {len(volumes)} volumes concurrently")
+            
+            # Step 3: Analyze all volumes CONCURRENTLY (major optimization)
+            # Process in batches of 5 to avoid overwhelming the API
+            BATCH_SIZE = 5
+            all_results = []
+            
+            for i in range(0, len(volumes), BATCH_SIZE):
+                batch = volumes[i:i + BATCH_SIZE]
+                batch_tasks = [
+                    self._analyze_single_volume(vol, edge_serial_map, period)
+                    for vol in batch
+                ]
+                batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+                all_results.extend(batch_results)
+            
+            # Step 4: Categorize results
+            healthy_volumes = []
+            warning_volumes = []
+            critical_volumes = []
+            no_data_volumes = []
+            errors = []
+            
+            for result in all_results:
+                if isinstance(result, Exception):
+                    errors.append({"volume": "Unknown", "error": str(result)})
+                    continue
+                    
+                result_type = result.get("type")
+                data = result.get("data")
+                
+                if result_type == "healthy":
+                    healthy_volumes.append(data)
+                elif result_type == "warning":
+                    warning_volumes.append(data)
+                elif result_type == "critical":
+                    critical_volumes.append(data)
+                elif result_type == "no_data":
+                    no_data_volumes.append(data)
+                elif result_type == "error":
+                    errors.append(data)
+            
+            # Generate report
+            report = self._generate_report(
+                period=period,
+                total_volumes=len(volumes),
+                healthy=healthy_volumes,
+                warnings=warning_volumes,
+                critical=critical_volumes,
+                no_data=no_data_volumes,
+                errors=errors,
+            )
+            
+            return [TextContent(type="text", text=report)]
+            
+        except Exception as e:
+            logger.error(f"Fleet volume health analysis failed: {e}", exc_info=True)
+            return self.format_error(f"Failed to analyze fleet volume health: {str(e)}")
+
+    def _analyze_volume_health(self, vol_name: str, vol_id: str, analysis) -> Dict[str, Any]:
+        """Analyze health of a single volume and return status."""
+        stats = analysis.get_statistics()
+        latest = analysis.latest_snapshot
+        snapshots = analysis.complete_snapshots
+        
+        issues = []
+        status = "healthy"
+        
+        # Check OUD (Oldest Unprotected Data)
+        if latest and latest.oud_seconds is not None:
+            oud_hours = latest.oud_seconds / 3600
+            if oud_hours > 24:
+                issues.append(f"🚨 OUD: {oud_hours:.1f}h (>24h critical)")
+                status = "critical"
+            elif oud_hours > 4:
+                issues.append(f"⚠️ OUD: {oud_hours:.1f}h (>4h warning)")
+                if status != "critical":
+                    status = "warning"
+        
+        # Check average time to protect
+        protect_times = [s.protect_mean_seconds for s in snapshots if s.protect_mean_seconds]
+        if protect_times:
+            avg_protect = sum(protect_times) / len(protect_times)
+            if avg_protect > 7200:  # > 2 hours
+                issues.append(f"🚨 Avg protect time: {self._fmt(avg_protect)} (>2h critical)")
+                status = "critical"
+            elif avg_protect > 1800:  # > 30 min
+                issues.append(f"⚠️ Avg protect time: {self._fmt(avg_protect)} (>30m warning)")
+                if status != "critical":
+                    status = "warning"
+        
+        # Check snapshot frequency
+        if len(snapshots) < 2:
+            issues.append(f"⚠️ Only {len(snapshots)} snapshot(s) in period")
+            if status != "critical":
+                status = "warning"
+        
+        # Check max protection anomaly
+        if stats.get("protection_anomalies"):
+            max_unprotected = stats["protection_anomalies"].get("max_unprotected_time_seconds", 0)
+            if max_unprotected > 86400:  # > 24 hours
+                issues.append(f"🚨 Max unprotected: {self._fmt(max_unprotected)}")
+                status = "critical"
+        
+        return {
+            "name": vol_name,
+            "id": vol_id,
+            "status": status,
+            "latest_version": latest.volume_version if latest else None,
+            "latest_oud": self._fmt(latest.oud_seconds) if latest else "N/A",
+            "avg_protect_time": self._fmt(sum(protect_times) / len(protect_times)) if protect_times else "N/A",
+            "snapshot_count": len(snapshots),
+            "issues": issues,
+        }
+
+    def _generate_report(
+        self,
+        period: str,
+        total_volumes: int,
+        healthy: List[Dict],
+        warnings: List[Dict],
+        critical: List[Dict],
+        no_data: List[Dict],
+        errors: List[Dict],
+    ) -> str:
+        """Generate the fleet health summary report."""
+        # Convert period to human-readable format
+        period_desc = self._period_to_human(period)
+        
+        report = [
+            "=" * 70,
+            "📊 FLEET VOLUME HEALTH SUMMARY",
+            "=" * 70,
+            f"Analysis Period: {period_desc}",
+            f"Total Volumes: {total_volumes}",
+            "",
+        ]
+        
+        # Summary counts
+        report.append("=" * 70)
+        report.append("📈 SUMMARY")
+        report.append("=" * 70)
+        report.append(f"  ✅ Healthy:    {len(healthy)} volumes")
+        report.append(f"  ⚠️ Warning:    {len(warnings)} volumes")
+        report.append(f"  🚨 Critical:   {len(critical)} volumes")
+        report.append(f"  📭 No Data:    {len(no_data)} volumes")
+        if errors:
+            report.append(f"  ❌ Errors:     {len(errors)} volumes")
+        report.append("")
+        
+        # Critical volumes (always show details)
+        if critical:
+            report.append("=" * 70)
+            report.append("🚨 CRITICAL VOLUMES - IMMEDIATE ATTENTION REQUIRED")
+            report.append("=" * 70)
+            for vol in critical:
+                report.append(f"\n  📦 {vol['name']}")
+                report.append(f"     Latest Version: {vol['latest_version'] or 'N/A'}")
+                report.append(f"     Current OUD: {vol['latest_oud']}")
+                report.append(f"     Avg Protect Time: {vol['avg_protect_time']}")
+                report.append(f"     Snapshots: {vol['snapshot_count']}")
+                if vol['issues']:
+                    report.append("     Issues:")
+                    for issue in vol['issues']:
+                        report.append(f"       • {issue}")
+            report.append("")
+        
+        # Warning volumes
+        if warnings:
+            report.append("=" * 70)
+            report.append("⚠️ WARNING VOLUMES - REVIEW RECOMMENDED")
+            report.append("=" * 70)
+            for vol in warnings:
+                report.append(f"\n  📦 {vol['name']}")
+                report.append(f"     Current OUD: {vol['latest_oud']} | Avg Protect: {vol['avg_protect_time']}")
+                if vol['issues']:
+                    for issue in vol['issues']:
+                        report.append(f"       • {issue}")
+            report.append("")
+        
+        # Healthy volumes (compact list)
+        if healthy:
+            report.append("=" * 70)
+            report.append("✅ HEALTHY VOLUMES")
+            report.append("=" * 70)
+            # Just show names in compact format
+            healthy_names = [v['name'] for v in healthy]
+            if len(healthy_names) <= 10:
+                for name in healthy_names:
+                    report.append(f"  • {name}")
+            else:
+                # Show first 5 and count
+                for name in healthy_names[:5]:
+                    report.append(f"  • {name}")
+                report.append(f"  ... and {len(healthy_names) - 5} more healthy volumes")
+            report.append("")
+        
+        # No data volumes
+        if no_data:
+            report.append("=" * 70)
+            report.append("📭 VOLUMES WITH NO RECENT SNAPSHOTS")
+            report.append("=" * 70)
+            report.append(f"  (No snapshot activity found in the {period_desc} analysis window)")
+            for vol in no_data:
+                report.append(f"  • {vol['name']}: {vol['reason']}")
+            report.append("")
+        
+        # Errors
+        if errors:
+            report.append("=" * 70)
+            report.append("❌ ANALYSIS ERRORS")
+            report.append("=" * 70)
+            for err in errors:
+                report.append(f"  • {err['volume']}: {err['error']}")
+            report.append("")
+        
+        # Thresholds reference
+        report.append("=" * 70)
+        report.append("📋 HEALTH THRESHOLDS")
+        report.append("=" * 70)
+        report.append("  OUD Age:           Warning >4h,  Critical >24h")
+        report.append("  Time to Protect:   Warning >30m, Critical >2h")
+        report.append("")
+        report.append("=" * 70)
+        report.append("📊 Report generated from Portal Ops IQ telemetry")
+        report.append("=" * 70)
+        
+        return "\n".join(report)
+
+    def _period_to_human(self, period: str) -> str:
+        """Convert ISO 8601 period to human-readable format."""
+        period_map = {
+            "PT1H": "Last 1 hour",
+            "PT2H": "Last 2 hours",
+            "PT3H": "Last 3 hours",
+            "PT6H": "Last 6 hours",
+            "PT12H": "Last 12 hours",
+            "PT24H": "Last 24 hours",
+            "P1D": "Last 24 hours",
+            "P2D": "Last 2 days",
+            "P3D": "Last 3 days",
+            "P4D": "Last 4 days",
+        }
+        return period_map.get(period.upper(), f"Period: {period}")
+
+    def _fmt(self, seconds: float | None) -> str:
+        """Format duration."""
+        if seconds is None:
+            return "N/A"
+        if seconds < 60:
+            return f"{seconds:.1f}s"
+        elif seconds < 3600:
+            return f"{seconds / 60:.1f}m"
+        else:
+            return f"{seconds / 3600:.2f}h"
 
 
 class CompareVolumeProtectionMetricsTool(BaseVolumeTelemetryTool):
@@ -1346,7 +2411,7 @@ Execute these steps IN ORDER:
 
 STEP 1: Get Protection Metrics Summary
   Tool: get_volume_protection_metrics
-  Args: volume="{volume_guid}", period="P7D"
+  Args: volume="{volume_guid}", period="P1D"
   Look for:
     • Latest snapshot version
     • Average time to protect
@@ -1408,7 +2473,7 @@ STEP 3: Get propagation metrics
 
 STEP 4: Check all appliances sync status
   Tool: get_all_appliances_sync_status
-  Args: volume="{volume_guid}", period="P7D"
+  Args: volume="{volume_guid}", period="P1D"
   Extract and report:
     • Current version on each appliance
     • Lag (versions behind) for each
@@ -1543,7 +2608,7 @@ STEP 8: Get snapshot propagation by appliance
 
 STEP 9: Check all appliances current sync status
   Tool: get_all_appliances_sync_status
-  Args: volume="{volume_guid}", period="P7D"
+  Args: volume="{volume_guid}", period="P1D"
   COLLECT DATA FOR:
     • current_versions: {{serial: version, ...}}
     • lag_versions: {{serial: lag, ...}}
