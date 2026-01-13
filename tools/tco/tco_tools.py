@@ -368,7 +368,8 @@ class TCOAnalysisResult:
                     "yearly": f"${self.current_hourly_cost:.4f}/hr × 8,760 hrs = ${self.current_yearly_cost:.2f}",
                 },
                 "pricing_assumptions": [
-                    "On-Demand pricing (no Reserved Instances or Savings Plans)",
+                    "⚠️ IMPORTANT: We do not have visibility into your actual cloud billing arrangement",
+                    "Using On-Demand list pricing (your costs may differ if using Reserved Instances, Savings Plans, or negotiated rates)",
                     "Linux/Unix operating system",
                     "Shared tenancy",
                 ],
@@ -398,22 +399,31 @@ class TCOAnalysisResult:
     
     def _get_important_context(self) -> str:
         """Get the key context that should be communicated to the user."""
+        billing_disclaimer = (
+            "IMPORTANT: These are estimates based on public list pricing. "
+            "Your actual costs may differ if you have Reserved Instances, Savings Plans, "
+            "or negotiated pricing with your cloud provider. "
+            "For more accurate estimates, you can provide your actual hourly rate per instance."
+        )
         if self.provider == "aws":
             return (
                 f"Cost estimates are based on live AWS On-Demand pricing for {self.instance_type} "
                 f"in {self.region}, fetched from the Vantage pricing API. "
-                f"Utilization metrics are from the last {self.analysis_period_hours} hours ({self.analysis_period_hours // 24} days)."
+                f"Utilization metrics are from the last {self.analysis_period_hours} hours ({self.analysis_period_hours // 24} days). "
+                f"{billing_disclaimer}"
             )
         elif self.provider == "azure":
             return (
                 f"Cost estimates are based on live Azure Pay-As-You-Go pricing for {self.instance_type} "
                 f"in {self.region}, fetched from the Azure Retail Prices API. "
-                f"Utilization metrics are from the last {self.analysis_period_hours} hours ({self.analysis_period_hours // 24} days)."
+                f"Utilization metrics are from the last {self.analysis_period_hours} hours ({self.analysis_period_hours // 24} days). "
+                f"{billing_disclaimer}"
             )
         else:
             return (
                 f"Cost estimates are based on static pricing data for {self.instance_type}. "
-                f"Utilization metrics are from the last {self.analysis_period_hours} hours ({self.analysis_period_hours // 24} days)."
+                f"Utilization metrics are from the last {self.analysis_period_hours} hours ({self.analysis_period_hours // 24} days). "
+                f"{billing_disclaimer}"
             )
     
     def _get_pricing_source_summary(self) -> str:
@@ -484,15 +494,18 @@ class TCOAnalysisResult:
         lines.append("")
         
         # Current Costs with clear attribution
-        lines.append("## Current Costs")
+        lines.append("## Estimated Current Costs")
         lines.append(f"*{self._get_cost_note()}*")
         lines.append("")
-        lines.append(f"| Period | Cost |")
-        lines.append(f"|--------|------|")
-        lines.append(f"| Hourly | ${self.current_hourly_cost:.4f} |")
-        lines.append(f"| Daily | ${self.current_daily_cost:.2f} |")
-        lines.append(f"| Monthly | ${self.current_monthly_cost:.2f} |")
-        lines.append(f"| Yearly | ${self.current_yearly_cost:.2f} |")
+        lines.append("**Note**: These are estimates based on On-Demand list pricing, assuming 24/7 operation.")
+        lines.append("Actual costs may differ based on Reserved Instances, Savings Plans, or usage patterns.")
+        lines.append("")
+        lines.append(f"| Period | Estimated Cost |")
+        lines.append(f"|--------|----------------|")
+        lines.append(f"| Hourly | ~${self.current_hourly_cost:.4f} |")
+        lines.append(f"| Daily | ~${self.current_daily_cost:.2f} |")
+        lines.append(f"| Monthly | ~${self.current_monthly_cost:.2f} |")
+        lines.append(f"| Yearly | ~${self.current_yearly_cost:.2f} |")
         lines.append("")
         
         # Cost Calculation Breakdown
@@ -554,10 +567,10 @@ class TCOAnalysisResult:
             lines.append("")
             lines.append(f"- **Reason**: {rec.reason}")
             lines.append(f"- **Confidence**: {rec.confidence}")
-            lines.append(f"- **Current Monthly Cost**: ${rec.current_monthly_cost:.2f}")
-            lines.append(f"- **Recommended Monthly Cost**: ${rec.recommended_monthly_cost:.2f}")
-            lines.append(f"- **Monthly Savings**: ${rec.monthly_savings:.2f}")
-            lines.append(f"- **Yearly Savings**: ${rec.yearly_savings:.2f}")
+            lines.append(f"- **Est. Current Monthly Cost**: ~${rec.current_monthly_cost:.2f}")
+            lines.append(f"- **Est. Recommended Monthly Cost**: ~${rec.recommended_monthly_cost:.2f}")
+            lines.append(f"- **Est. Monthly Savings**: ~${rec.monthly_savings:.2f}")
+            lines.append(f"- **Est. Yearly Savings**: ~${rec.yearly_savings:.2f}")
         elif rec.action == "upsize":
             lines.append(f"⚠️ **PERFORMANCE RISK**")
             lines.append("")
@@ -565,9 +578,9 @@ class TCOAnalysisResult:
             lines.append("")
             lines.append(f"- **Reason**: {rec.reason}")
             lines.append(f"- **Confidence**: {rec.confidence}")
-            lines.append(f"- **Current Monthly Cost**: ${rec.current_monthly_cost:.2f}")
-            lines.append(f"- **Recommended Monthly Cost**: ${rec.recommended_monthly_cost:.2f}")
-            lines.append(f"- **Additional Monthly Cost**: ${abs(rec.monthly_savings):.2f}")
+            lines.append(f"- **Est. Current Monthly Cost**: ~${rec.current_monthly_cost:.2f}")
+            lines.append(f"- **Est. Recommended Monthly Cost**: ~${rec.recommended_monthly_cost:.2f}")
+            lines.append(f"- **Est. Additional Monthly Cost**: ~${abs(rec.monthly_savings):.2f}")
         else:
             lines.append(f"✅ **OPTIMAL**")
             lines.append("")
@@ -1825,16 +1838,26 @@ Note: This tool fetches VM instance type from detailed edge data, not the list e
         lines.append("")
         
         # Total Costs
-        lines.append("## Current Costs")
+        lines.append("## Estimated Current Costs")
         lines.append("")
-        lines.append(f"| Metric | Value |")
-        lines.append(f"|--------|-------|")
-        lines.append(f"| Total Monthly | ${total_monthly:.2f} |")
-        lines.append(f"| Total Yearly | ${total_yearly:.2f} |")
+        lines.append("⚠️ **Important Disclaimer**: These estimates use public On-Demand list pricing.")
+        lines.append("Your actual costs may differ significantly based on:")
+        lines.append("- Reserved Instances or Savings Plans you may have purchased")
+        lines.append("- Enterprise agreements or negotiated discounts with your cloud provider")
+        lines.append("- Spot instances or other pricing models")
+        lines.append("")
+        lines.append("*We do not have visibility into your actual billing arrangement.*")
+        lines.append("")
+        lines.append("💡 **Tip**: If you know your actual hourly rate per instance, let me know and I can recalculate with your real costs.")
+        lines.append("")
+        lines.append(f"| Metric | Estimated Value (On-Demand List Price) |")
+        lines.append(f"|--------|----------------------------------------|")
+        lines.append(f"| Est. Monthly | ~${total_monthly:.2f} |")
+        lines.append(f"| Est. Yearly | ~${total_yearly:.2f} |")
         if aws_count > 0:
-            lines.append(f"| AWS ({aws_count} appliances) | ${aws_costs:.2f}/mo |")
+            lines.append(f"| AWS ({aws_count} appliances) | ~${aws_costs:.2f}/mo |")
         if azure_count > 0:
-            lines.append(f"| Azure ({azure_count} appliances) | ${azure_costs:.2f}/mo |")
+            lines.append(f"| Azure ({azure_count} appliances) | ~${azure_costs:.2f}/mo |")
         lines.append("")
         
         # Outliers (IMPORTANT)
@@ -1844,7 +1867,7 @@ Note: This tool fetches VM instance type from detailed edge data, not the list e
             for o in outliers:
                 lines.append(f"### {o['name']}")
                 lines.append(f"- **Instance**: {o['instance_type']} in {o['region']}")
-                lines.append(f"- **Monthly Cost**: ${o['monthly_cost']:.2f}")
+                lines.append(f"- **Est. Monthly Cost**: ~${o['monthly_cost']:.2f}")
                 lines.append(f"- **CPU**: {o['cpu_percent']:.1f}% | **Memory**: {o['memory_percent']:.1f}%")
                 lines.append(f"- **Issues**:")
                 for reason in o['reasons']:
@@ -1862,17 +1885,17 @@ Note: This tool fetches VM instance type from detailed edge data, not the list e
         lines.append("")
         
         if potential_savings_monthly > 0:
-            lines.append(f"**Potential Savings**: ${potential_savings_monthly:.2f}/month (${potential_savings_yearly:.2f}/year)")
+            lines.append(f"**Estimated Potential Savings**: ~${potential_savings_monthly:.2f}/month (~${potential_savings_yearly:.2f}/year)")
             lines.append("")
         
         # Downsize Recommendations
         if downsize_candidates:
             lines.append("### 💰 Downsize Recommendations")
             lines.append("")
-            lines.append("| Appliance | Current | Recommended | Monthly Savings |")
-            lines.append("|-----------|---------|-------------|-----------------|")
+            lines.append("| Appliance | Current | Recommended | Est. Monthly Savings |")
+            lines.append("|-----------|---------|-------------|----------------------|")
             for r in downsize_candidates:
-                lines.append(f"| {r.appliance_name} | {r.instance_type} | {r.recommendation.recommended_instance} | ${r.recommendation.monthly_savings:.2f} |")
+                lines.append(f"| {r.appliance_name} | {r.instance_type} | {r.recommendation.recommended_instance} | ~${r.recommendation.monthly_savings:.2f} |")
             lines.append("")
         
         # Upsize Recommendations
@@ -1889,11 +1912,11 @@ Note: This tool fetches VM instance type from detailed edge data, not the list e
         if include_details and results:
             lines.append("## Per-Appliance Details")
             lines.append("")
-            lines.append("| Appliance | Instance | Region | Monthly | CPU | Memory | Status |")
-            lines.append("|-----------|----------|--------|---------|-----|--------|--------|")
+            lines.append("| Appliance | Instance | Region | Est. Monthly | CPU | Memory | Status |")
+            lines.append("|-----------|----------|--------|--------------|-----|--------|--------|")
             for r in sorted(results, key=lambda x: x.current_monthly_cost, reverse=True):
                 status = "✅" if r.recommendation.action == "optimal" else ("💰" if r.recommendation.action == "downsize" else "⚠️")
-                lines.append(f"| {r.appliance_name} | {r.instance_type} | {r.region} | ${r.current_monthly_cost:.2f} | {r.avg_cpu_percent:.0f}% | {r.avg_memory_percent:.0f}% | {status} |")
+                lines.append(f"| {r.appliance_name} | {r.instance_type} | {r.region} | ~${r.current_monthly_cost:.2f} | {r.avg_cpu_percent:.0f}% | {r.avg_memory_percent:.0f}% | {status} |")
             lines.append("")
         
         # Non-cloud appliances
@@ -1916,7 +1939,23 @@ Note: This tool fetches VM instance type from detailed edge data, not the list e
         # Footer
         lines.append("---")
         lines.append(f"*Report generated at {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}*")
-        lines.append("*Costs assume On-Demand pricing (no Reserved Instances or Savings Plans)*")
+        lines.append("")
+        lines.append("**⚠️ Important Cost Disclaimer**")
+        lines.append("")
+        lines.append("These estimates are approximations only. We do NOT have visibility into your actual cloud billing arrangement.")
+        lines.append("")
+        lines.append("**Assumptions used in this report:**")
+        lines.append("- On-Demand list pricing (publicly available rates)")
+        lines.append("- 24/7 operation (8,760 hours/year)")
+        lines.append("")
+        lines.append("**Your actual costs may be significantly different if you have:**")
+        lines.append("- Reserved Instances or Savings Plans")
+        lines.append("- Enterprise agreements with your cloud provider")
+        lines.append("- Negotiated discounts or custom pricing")
+        lines.append("- Spot instances or other pricing models")
+        lines.append("")
+        lines.append("💡 **Want more accurate estimates?** Tell me your actual hourly rate per instance ")
+        lines.append("(e.g., \"we pay $0.15/hour for our m5.xlarge instances\") and I can recalculate with your real costs.")
         
         return "\n".join(lines)
 
