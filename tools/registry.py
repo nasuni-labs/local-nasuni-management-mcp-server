@@ -238,7 +238,8 @@ class ToolRegistry:
             GetEndToEndProtectionTimingTool,
             GetVolumeLatestVersionTool,
             CheckApplianceSyncStatusTool,
-            GetAllAppliancesSyncStatusTool
+            GetAllAppliancesSyncStatusTool,
+            FileAvailabilityTimingTool,
         )
         
         # End-to-end timing
@@ -248,12 +249,18 @@ class ToolRegistry:
             integration_helper
         ))
         
+        # File availability timing (protection + propagation to destination)
+        self.register_tool(FileAvailabilityTimingTool(
+            protection_client,
+            integration_helper
+        ))
+        
         # Sync status monitoring
         self.register_tool(GetVolumeLatestVersionTool(protection_client, integration_helper))
         self.register_tool(CheckApplianceSyncStatusTool(protection_client, propagation_client, integration_helper))
         self.register_tool(GetAllAppliancesSyncStatusTool(protection_client, propagation_client, integration_helper))
         
-        print("✅ Registered 4 Portal combined & sync status tools", file=sys.stderr)
+        print("✅ Registered 5 Portal combined & sync status tools", file=sys.stderr)
 
     def register_portal_telemetry_tools(
         self,

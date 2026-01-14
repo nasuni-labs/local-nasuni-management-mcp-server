@@ -58,6 +58,11 @@ from tools.portal_telemetry.appliance_workflow_tools import (
     register_appliance_workflow_tools,
 )
 
+from tools.portal_telemetry.file_availability_tool import (
+    FileAvailabilityTimingTool,
+    register_file_availability_timing_tool,
+)
+
 __all__ = [
     # Volume data tools
     "PortalVolumeTelemetryTool",
@@ -71,6 +76,9 @@ __all__ = [
     "GetVolumeLatestVersionTool",
     "GetAllAppliancesSyncStatusTool",
     "CheckApplianceSyncStatusTool",
+    # File availability timing
+    "FileAvailabilityTimingTool",
+    "register_file_availability_timing_tool",
     # Appliance data tools
     "PortalApplianceTelemetryTool",
     # Volume workflow tools
