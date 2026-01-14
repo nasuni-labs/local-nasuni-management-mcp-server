@@ -205,7 +205,13 @@ class PortalApplianceTelemetryTool(BaseTool):
 
         sections = [header]
         sections.append(f"Entity: {entity_label}")
-        sections.append(f"Period: {context.get('period')}")
+        
+        # Handle snapshot vs time-series display
+        if context.get("time_window"):
+            sections.append(f"Time Window: {context['time_window']}")
+        elif context.get("period"):
+            sections.append(f"Period: {context['period']}")
+        
         if context.get("panel_width"):
             sections.append(f"Panel Width: {context['panel_width']} px")
         if context.get("bin_size"):
@@ -215,6 +221,9 @@ class PortalApplianceTelemetryTool(BaseTool):
 
         if self.metric_key == "appliance_health_score":
             sections.append(self._format_health_score(payload))
+        elif self.metric_key == "current_appliance_performance":
+            # This endpoint returns a single snapshot object, not a list of records
+            sections.append(self._format_current_performance(payload))
         else:
             records = _extract_primary_records(payload)
             sections.append(_summarize_records(records))
@@ -227,6 +236,84 @@ class PortalApplianceTelemetryTool(BaseTool):
             sections.append(_raw_preview(payload))
 
         return "\n".join(section for section in sections if section)
+
+    def _format_current_performance(self, payload: Dict[str, Any]) -> str:
+        """Format the current_appliance_performance snapshot response."""
+        parts = ["=== Current Performance Snapshot ==="]
+        
+        # Helper to safely convert to float
+        def to_float(val):
+            if val is None:
+                return None
+            try:
+                return float(val)
+            except (ValueError, TypeError):
+                return None
+        
+        # CPU Utilization
+        cpu_util = to_float(payload.get("cpu_util"))
+        if cpu_util is not None:
+            parts.append(f"CPU Utilization: {cpu_util:.1f}%")
+        else:
+            parts.append("CPU Utilization: N/A")
+        
+        # Memory (available_memory from API)
+        available_mem = to_float(payload.get("available_memory"))
+        if available_mem is not None:
+            parts.append(f"Available Memory: {available_mem:.1f}%")
+        else:
+            parts.append("Available Memory: N/A")
+        
+        # 15-minute Load Average
+        load_avg = to_float(payload.get("fifteen_minute_load_average"))
+        if load_avg is not None:
+            parts.append(f"15-min Load Average: {load_avg:.2f}")
+        else:
+            parts.append("15-min Load Average: N/A")
+        
+        # Number of cores (for context on load average)
+        num_cores = payload.get("num_cores")
+        if num_cores is not None:
+            try:
+                num_cores = int(num_cores)
+                parts.append(f"CPU Cores: {num_cores}")
+                if load_avg is not None:
+                    load_per_core = load_avg / num_cores
+                    parts.append(f"Load per Core: {load_per_core:.2f}")
+            except (ValueError, TypeError):
+                parts.append(f"CPU Cores: {num_cores}")
+        
+        # Uptime
+        uptime_secs = payload.get("uptime")
+        if uptime_secs is not None:
+            try:
+                uptime_secs = int(uptime_secs)
+                days = uptime_secs // 86400
+                hours = (uptime_secs % 86400) // 3600
+                parts.append(f"Uptime: {days} days, {hours} hours")
+            except (ValueError, TypeError):
+                parts.append(f"Uptime: {uptime_secs}")
+        
+        # Timestamp
+        timestamp = payload.get("time")
+        if timestamp:
+            from datetime import datetime, timezone
+            try:
+                ts = int(timestamp) if isinstance(timestamp, str) else timestamp
+                dt = datetime.fromtimestamp(ts / 1000, tz=timezone.utc)
+                parts.append(f"Timestamp: {dt.isoformat()}")
+            except:
+                parts.append(f"Timestamp: {timestamp}")
+        
+        parts.append("")
+        
+        # Add metadata if present
+        metadata_summary = _format_metadata(payload.get("metadata"))
+        if metadata_summary:
+            parts.append("Metadata")
+            parts.append(metadata_summary)
+        
+        return "\n".join(parts)
 
     def _format_health_score(self, payload: Dict[str, Any]) -> str:
         parts = ["=== Health Score Summary ==="]

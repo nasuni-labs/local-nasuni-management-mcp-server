@@ -244,41 +244,73 @@ class NMCPortalIntegration:
             return None
 
     async def resolve_filer_identifier(self, identifier: str) -> Tuple[Optional[str], str]:
-        """Resolve filer identifier (serial, name, or GUID) to a serial number."""
+        """Resolve filer identifier (serial, name/description, or edge ID) to a serial number.
+        
+        Uses Portal Edges API as the primary source for appliance resolution.
+        
+        Args:
+            identifier: Edge serial number, description/name, or edge ID (UUID)
+            
+        Returns:
+            Tuple of (serial_number, match_type) or (None, "not_found")
+        """
+        import re
+        
         normalized = (identifier or "").strip()
         if not normalized:
             return None, "unknown"
 
         normalized_lower = normalized.lower()
+        
+        # Check if it looks like a UUID
+        uuid_pattern = re.compile(
+            r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+            re.IGNORECASE
+        )
+        is_uuid = bool(uuid_pattern.match(normalized))
 
-        filers = await self._get_cached_filers()
-        for filer in filers:
-            serial = (filer.get("serial_number") or "").strip()
-            description = (filer.get("description") or "").strip()
-            guid = (filer.get("guid") or "").strip()
-            name = (filer.get("name") or "").strip()
+        # Use Portal Edges API to resolve
+        if self.portal_edges_client:
+            try:
+                edges_response = await self.portal_edges_client.get_edges()
+                for edge in edges_response.items:
+                    edge_serial = (edge.serial or "").strip()
+                    edge_desc = (edge.description or "").strip()
+                    edge_id = (edge.id or "").strip()
+                    
+                    if not edge_serial:
+                        continue
+                    
+                    # Match by serial number
+                    if edge_serial.lower() == normalized_lower:
+                        logger.info(f"Resolved via Portal: serial match {edge_serial}")
+                        return edge_serial, "serial"
+                    # Match by description/name
+                    if edge_desc and edge_desc.lower() == normalized_lower:
+                        logger.info(f"Resolved via Portal: {edge_desc} -> {edge_serial}")
+                        return edge_serial, "description"
+                    # Match by edge ID
+                    if edge_id and edge_id.lower() == normalized_lower:
+                        logger.info(f"Resolved via Portal: edge ID {edge_id} -> {edge_serial}")
+                        return edge_serial, "edge_id"
+            except Exception as e:
+                logger.error(f"Portal edges lookup failed: {e}")
 
-            if serial and serial.lower() == normalized_lower:
-                logger.info(f"Resolved filer serial directly: {serial}")
-                return serial, "serial"
-            if description and description.lower() == normalized_lower and serial:
-                logger.info(f"Resolved filer via description: {description} -> {serial}")
-                return serial, "description"
-            if guid and guid.lower() == normalized_lower and serial:
-                logger.info(f"Resolved filer via GUID: {guid} -> {serial}")
-                return serial, "guid"
-            if name and name.lower() == normalized_lower and serial:
-                logger.info(f"Resolved filer via name: {name} -> {serial}")
-                return serial, "name"
-
-        # Could not resolve via NMC inventory; assume caller provided serial already
-        logger.warning(f"Filer identifier '{identifier}' not found in NMC inventory; using as-is")
-        return normalized, "provided"
+        # If it's already a valid UUID and Portal lookup failed/unavailable, use it directly
+        # (it might be a serial number that just wasn't in the list)
+        if is_uuid:
+            logger.info(f"Using provided UUID directly: {normalized}")
+            return normalized, "uuid_provided"
+        
+        # Not a UUID and not found in Portal - can't resolve
+        logger.error(f"Filer identifier '{identifier}' not found in Portal and is not a valid UUID")
+        return None, "not_found"
 
     async def resolve_filer_to_guid(self, identifier: str) -> Tuple[Optional[str], str]:
         """Resolve filer identifier (serial, name, or GUID) to a filer GUID.
         
-        This is needed for Portal Edge API which uses filer GUID (not serial) for lookups.
+        This is needed for Portal Edge API which uses filer GUID for lookups.
+        Uses Portal Edges API as PRIMARY source (not NMC).
         
         Args:
             identifier: Filer serial number, description/name, or GUID
@@ -301,38 +333,39 @@ class NMCPortalIntegration:
         )
         is_uuid = bool(uuid_pattern.match(normalized))
 
-        # Try to resolve via NMC inventory first
-        filers = await self._get_cached_filers()
-        for filer in filers:
-            serial = (filer.get("serial_number") or "").strip()
-            description = (filer.get("description") or "").strip()
-            guid = (filer.get("guid") or "").strip()
-            name = (filer.get("name") or "").strip()
+        # Use Portal Edges API as PRIMARY source (not NMC)
+        if hasattr(self, 'portal_edges_client') and self.portal_edges_client:
+            try:
+                edges_response = await self.portal_edges_client.get_edges()
+                if edges_response and hasattr(edges_response, 'items') and edges_response.items:
+                    for edge in edges_response.items:
+                        edge_id = (edge.id or "").strip()
+                        edge_description = (edge.description or "").strip()
+                        edge_serial = (edge.serial or "").strip()
+                        
+                        # Edge id is the GUID we need
+                        if not edge_id:
+                            continue
+                        
+                        if edge_id.lower() == normalized_lower:
+                            logger.info(f"Portal: Resolved edge id as GUID directly: {edge_id}")
+                            return edge_id, "guid"
+                        if edge_serial and edge_serial.lower() == normalized_lower:
+                            logger.info(f"Portal: Resolved edge serial to GUID: {edge_serial} -> {edge_id}")
+                            return edge_id, "serial"
+                        if edge_description and edge_description.lower() == normalized_lower:
+                            logger.info(f"Portal: Resolved edge description to GUID: {edge_description} -> {edge_id}")
+                            return edge_id, "description"
+            except Exception as exc:
+                logger.warning(f"Portal Edges API lookup failed, cannot resolve: {exc}")
 
-            if not guid:
-                continue  # Skip filers without GUID
-
-            if guid.lower() == normalized_lower:
-                logger.info(f"Resolved filer GUID directly: {guid}")
-                return guid, "guid"
-            if serial and serial.lower() == normalized_lower:
-                logger.info(f"Resolved filer serial to GUID: {serial} -> {guid}")
-                return guid, "serial"
-            if description and description.lower() == normalized_lower:
-                logger.info(f"Resolved filer description to GUID: {description} -> {guid}")
-                return guid, "description"
-            if name and name.lower() == normalized_lower:
-                logger.info(f"Resolved filer name to GUID: {name} -> {guid}")
-                return guid, "name"
-
-        # Not found in NMC inventory - if it looks like a UUID, use it directly
-        # (Portal may have edges that NMC doesn't know about)
+        # Not found in Portal - if it looks like a UUID, use it directly
         if is_uuid:
-            logger.info(f"Using provided UUID directly (not in NMC inventory): {normalized}")
+            logger.info(f"Using provided UUID directly (not found in Portal): {normalized}")
             return normalized, "uuid_direct"
         
-        # Not a UUID and not in inventory - can't resolve
-        logger.warning(f"Filer identifier '{identifier}' not found in NMC inventory and is not a valid UUID")
+        # Not a UUID and not in Portal - can't resolve
+        logger.warning(f"Filer identifier '{identifier}' not found in Portal and is not a valid UUID")
         return None, "not_found"
 
     async def _get_cached_filers(self) -> List[Dict[str, Any]]:
