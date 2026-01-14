@@ -38,6 +38,9 @@ logger = get_logger(__name__)
 class PortalApplianceTelemetryTool(BaseTool):
     """Tool for querying a single Portal appliance telemetry metric."""
 
+    # Endpoints that are snapshots (fixed time window, period parameter ignored)
+    SNAPSHOT_ENDPOINTS = {"current_appliance_performance"}
+
     def __init__(
         self,
         metric_key: str,
@@ -48,10 +51,21 @@ class PortalApplianceTelemetryTool(BaseTool):
             raise ValueError(f"Unsupported appliance metric '{metric_key}'")
 
         config = APPLIANCE_TELEMETRY_CONFIG[metric_key]
-        description = (
-            f"[TELEMETRY] Portal Ops IQ appliance metric — {config['display_name']}. "
-            f"{config['description']} Accepts a filer serial/name and returns aggregated statistics with optional raw data."
-        )
+        
+        # Special description for snapshot endpoints (no period parameter)
+        if metric_key in self.SNAPSHOT_ENDPOINTS:
+            description = (
+                f"[TELEMETRY] Portal Ops IQ — {config['display_name']}. "
+                f"{config['description']} "
+                "NOTE: This returns a SNAPSHOT based on the last 30 minutes of data only. "
+                "No time period can be specified. For historical trends over hours/days, "
+                "use cpu_utilization, memory_utilization, or other time-series metrics instead."
+            )
+        else:
+            description = (
+                f"[TELEMETRY] Portal Ops IQ appliance metric — {config['display_name']}. "
+                f"{config['description']} Accepts a filer serial/name and returns aggregated statistics with optional raw data."
+            )
         super().__init__(
             name=f"portal_appliance_{metric_key}",
             description=description,
@@ -60,42 +74,51 @@ class PortalApplianceTelemetryTool(BaseTool):
         self.metric_config = config
         self.api_client = api_client
         self.integration = integration_helper
+        self.is_snapshot = metric_key in self.SNAPSHOT_ENDPOINTS
 
     def get_schema(self) -> Dict[str, Any]:
+        # Base properties for all appliance telemetry tools
+        properties = {
+            "appliance": {
+                "type": "string",
+                "description": "Filer serial number or name",
+            },
+        }
+        
+        # Only add period for non-snapshot endpoints
+        # Snapshot endpoints (like current_appliance_performance) use a fixed 30-minute window
+        if not self.is_snapshot:
+            properties["period"] = {
+                "type": "string",
+                "description": (
+                    "ISO 8601 duration or explicit range (default PT3H)."
+                ),
+                "default": "PT3H",
+            }
+            properties["panel_width"] = {
+                "type": "integer",
+                "description": "Panel width in pixels (100-5200) for sampling hints.",
+            }
+            properties["bin_size"] = {
+                "type": "integer",
+                "description": "Bin size in seconds (60-3600) for sampling hints.",
+            }
+            properties["timezone_offset_minutes"] = {
+                "type": "integer",
+                "description": (
+                    "Optional timezone offset minutes (only used for health_score)."
+                ),
+            }
+        
+        properties["include_raw"] = {
+            "type": "boolean",
+            "description": "Include a truncated JSON preview of the raw payload.",
+            "default": False,
+        }
+        
         return {
             "type": "object",
-            "properties": {
-                "appliance": {
-                    "type": "string",
-                    "description": "Filer serial number or name",
-                },
-                "period": {
-                    "type": "string",
-                    "description": (
-                        "ISO 8601 duration or explicit range (default PT3H)."
-                    ),
-                    "default": "PT3H",
-                },
-                "panel_width": {
-                    "type": "integer",
-                    "description": "Panel width in pixels (100-5200) for sampling hints.",
-                },
-                "bin_size": {
-                    "type": "integer",
-                    "description": "Bin size in seconds (60-3600) for sampling hints.",
-                },
-                "timezone_offset_minutes": {
-                    "type": "integer",
-                    "description": (
-                        "Optional timezone offset minutes (only used for health_score)."
-                    ),
-                },
-                "include_raw": {
-                    "type": "boolean",
-                    "description": "Include a truncated JSON preview of the raw payload.",
-                    "default": False,
-                },
-            },
+            "properties": properties,
             "required": ["appliance"],
             "additionalProperties": False,
         }
@@ -103,11 +126,21 @@ class PortalApplianceTelemetryTool(BaseTool):
     async def execute(self, arguments: Dict[str, Any]) -> List[TextContent]:
         try:
             appliance = arguments.get("appliance", "").strip()
-            period = arguments.get("period", "PT3H")
-            panel_width = arguments.get("panel_width")
-            bin_size = arguments.get("bin_size")
-            tz_offset = arguments.get("timezone_offset_minutes")
             include_raw = arguments.get("include_raw", False)
+            
+            # For snapshot endpoints, we don't expose period to users but the API
+            # still requires it (bug in Portal API). Send a dummy value.
+            if self.is_snapshot:
+                # API requires period but ignores it - send PT30M to match the 30-minute window
+                period = "PT30M"
+                panel_width = None
+                bin_size = None
+                tz_offset = None
+            else:
+                period = arguments.get("period", "PT3H")
+                panel_width = arguments.get("panel_width")
+                bin_size = arguments.get("bin_size")
+                tz_offset = arguments.get("timezone_offset_minutes")
 
             if not appliance:
                 return self.format_error("Appliance identifier is required")
@@ -131,13 +164,19 @@ class PortalApplianceTelemetryTool(BaseTool):
                     error_msg += f" - Details: {response['details']}"
                 return self.format_error(error_msg)
 
-            output = self._format_response(
-                entity_label=f"Appliance {serial_number} (matched by {match_type})",
-                context={
+            # Build context for display
+            if self.is_snapshot:
+                context = {"time_window": "Last 30 minutes (snapshot)"}
+            else:
+                context = {
                     "period": period,
                     "panel_width": panel_width,
                     "bin_size": bin_size,
-                },
+                }
+
+            output = self._format_response(
+                entity_label=f"Appliance {serial_number} (matched by {match_type})",
+                context=context,
                 payload=response,
                 include_raw=include_raw,
             )
