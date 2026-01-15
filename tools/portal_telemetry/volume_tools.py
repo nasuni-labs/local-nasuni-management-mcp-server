@@ -2241,23 +2241,25 @@ def _calculate_appliance_sync_status(
         status_icon, status_text, snapshot_count, sync_count, last_snapshot, last_sync
     """
     # Find snapshots created by this appliance
+    appliance_id_lower = appliance_id.lower()
+    
     if match_serial:
         app_snapshots = [
             s for s in protection.complete_snapshots
-            if s.appliance == appliance_id or s.serial_number == match_serial
+            if s.appliance.lower() == appliance_id_lower or s.serial_number == match_serial
         ]
         app_syncs = [
             e for e in propagation.events
-            if e.sync_appliance == appliance_id or e.sync_serial_number == match_serial
+            if e.sync_appliance.lower() == appliance_id_lower or e.sync_serial_number == match_serial
         ]
     else:
         app_snapshots = [
             s for s in protection.complete_snapshots
-            if appliance_id in s.appliance or appliance_id in s.serial_number
+            if appliance_id_lower in s.appliance.lower() or appliance_id_lower in s.serial_number.lower()
         ]
         app_syncs = [
             e for e in propagation.events
-            if appliance_id in e.sync_appliance or appliance_id in e.sync_serial_number
+            if appliance_id_lower in e.sync_appliance.lower() or appliance_id_lower in e.sync_serial_number.lower()
         ]
     
     # Determine latest version on this appliance
