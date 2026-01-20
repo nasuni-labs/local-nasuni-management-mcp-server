@@ -14,7 +14,7 @@ class ListFilerHealthTool(BaseTool):
     def __init__(self, api_client: FilerHealthAPIClient):
         super().__init__(
             name="list_filer_health",
-            description="Returns comprehensive health status for all filer appliances including system components (CPU, memory, disk, network), file services (NFS, SMB), and advanced features (File IQ, Cyber Resilience, File Accelerator, AGFL). Use this for infrastructure health monitoring and troubleshooting."
+            description="[NMC] Internal service health check for all filers. For performance health metrics, use Portal Ops IQ health reporting (portal_appliance_appliance_health_score) instead."
         )
         self.api_client = api_client
     
@@ -113,7 +113,7 @@ class GetFilerHealthBySerialTool(BaseTool):
     def __init__(self, api_client: FilerHealthAPIClient):
         super().__init__(
             name="get_filer_health_by_serial",
-            description="Get detailed health status for a specific filer appliance by serial number. Shows all component statuses and health metrics for targeted troubleshooting."
+            description="[NMC] Internal service health check for a specific filer by serial number. For performance health metrics, use Portal Ops IQ health reporting (portal_appliance_appliance_health_score) instead."
         )
         self.api_client = api_client
     
@@ -361,7 +361,7 @@ class GetFilerHealthStatsTool(BaseTool):
     def __init__(self, api_client: FilerHealthAPIClient):
         super().__init__(
             name="get_filer_health_stats",
-            description="Get comprehensive statistics about filer health across the infrastructure, including component-level analysis, health scores, and problem identification."
+            description="[NMC] Aggregate internal service health statistics. For performance health metrics, use Portal Ops IQ health reporting (portal_appliance_appliance_health_score) instead."
         )
         self.api_client = api_client
     
@@ -447,7 +447,7 @@ class GetUnhealthyFilersTool(BaseTool):
     def __init__(self, api_client: FilerHealthAPIClient):
         super().__init__(
             name="get_unhealthy_filers",
-            description="Get all filer appliances that have unhealthy components requiring immediate attention. Use this for troubleshooting and identifying critical infrastructure issues."
+            description="[NMC] Internal service health check for filers with issues. For performance health metrics, use Portal Ops IQ health reporting (portal_appliance_appliance_health_score) instead."
         )
         self.api_client = api_client
     
@@ -519,7 +519,7 @@ class GetCriticalHealthIssuesTool(BaseTool):
     def __init__(self, api_client: FilerHealthAPIClient):
         super().__init__(
             name="get_critical_health_issues",
-            description="Identify and prioritize critical health issues across all filer appliances. Provides actionable insights for infrastructure maintenance and troubleshooting."
+            description="[NMC] Internal service health check for critical issues. For performance health metrics, use Portal Ops IQ health reporting (portal_appliance_appliance_health_score) instead."
         )
         self.api_client = api_client
     

@@ -108,10 +108,10 @@ class ConfigManager:
     
     def _is_portal_enabled(self) -> bool:
         """Check if Portal integration is enabled (has required credentials)."""
-        return bool(
-            self.portal_config.service_key and 
-            self.portal_config.service_secret
-        )
+        cfg = self.portal_config
+        has_service_credentials = bool(cfg.service_key and cfg.service_secret)
+        has_tokens = bool(cfg.access_token or cfg.refresh_token)
+        return has_service_credentials or has_tokens
     
     def add_api_config(self, name: str) -> APIConfig:
         """Add configuration for a new API - reuses the same config."""

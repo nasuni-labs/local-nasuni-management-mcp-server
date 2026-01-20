@@ -15,7 +15,7 @@ class ListVolumesTool(BaseTool):
     def __init__(self, api_client: VolumesAPIClient):
         super().__init__(
             name="list_volumes",
-            description="Returns a comprehensive list of storage volumes with details including cloud provider, location/region, protocols (CIFS/NFS), quotas, security settings, and access permissions. Use this for volume management and storage analysis."
+            description="[NMC - PREFER USE OF portal_list_volumes INSTEAD] Returns volumes from NMC API with protocol, quota, and security details. Use portal_list_volumes first; only use this NMC tool if Portal doesn't provide the specific info needed."
         )
         self.api_client = api_client
     

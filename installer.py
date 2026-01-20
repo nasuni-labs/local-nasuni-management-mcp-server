@@ -12,20 +12,12 @@ import platform
 import subprocess
 import shutil
 import getpass
-import urllib.request
-import urllib.error
-import ssl
-import zipfile
-import tarfile
 import argparse
 from pathlib import Path
 from typing import Optional, Dict, Tuple, List
-import tempfile
-import time
 
 # GitHub repository URL
 GITHUB_REPO = "https://github.com/nasuni-labs/local-nasuni-management-mcp-server"
-GITHUB_ARCHIVE = "https://github.com/nasuni-labs/local-nasuni-management-mcp-server/archive/refs/heads/main.zip"
 
 # ANSI color codes for terminal output
 class Colors:
@@ -82,7 +74,8 @@ class Installer:
         self.os_type = platform.system()
         self.arch = platform.machine()
         self.home = Path.home()
-        self.install_dir = None
+        # Set install_dir to the current directory (where installer.py is located)
+        self.install_dir = Path(__file__).parent.resolve()
         self.python_cmd = None
         self.pip_cmd = None
         self.venv_path = None
@@ -110,22 +103,22 @@ class Installer:
         """Print welcome header"""
         try:
             print(f"\n{Colors.CYAN}{'='*60}{Colors.ENDC}")
-            print(f"{Colors.BOLD}{Colors.HEADER}🚀 Nasuni Management MCP Server Universal Installer{Colors.ENDC}")
+            print(f"{Colors.BOLD}{Colors.HEADER}🚀 Nasuni Management MCP Server Installer{Colors.ENDC}")
             print(f"{Colors.CYAN}{'='*60}{Colors.ENDC}")
             print(f"OS: {Colors.GREEN}{self.os_type}{Colors.ENDC}")
             print(f"Architecture: {Colors.GREEN}{self.arch}{Colors.ENDC}")
             print(f"Python: {Colors.GREEN}{sys.version.split()[0]}{Colors.ENDC}")
-            print(f"Repository: {Colors.GREEN}{GITHUB_REPO}{Colors.ENDC}")
+            print(f"Installation Directory: {Colors.GREEN}{self.install_dir}{Colors.ENDC}")
             print(f"{Colors.CYAN}{'='*60}{Colors.ENDC}\n")
         except Exception as e:
             # Fallback without colors if there's any issue
             print("\n" + "="*60)
-            print("Nasuni Management MCP Server Universal Installer")
+            print("Nasuni Management MCP Server Installer")
             print("="*60)
             print(f"OS: {self.os_type}")
             print(f"Architecture: {self.arch}")
             print(f"Python: {sys.version.split()[0]}")
-            print(f"Repository: {GITHUB_REPO}")
+            print(f"Installation Directory: {self.install_dir}")
             print("="*60 + "\n")
     
     def check_python(self) -> bool:
@@ -196,124 +189,33 @@ class Installer:
             print("  sudo pacman -S python python-pip")
     
     
-    def download_from_github(self) -> bool:
-        """Download latest code from GitHub"""
-        print(f"\n{Colors.BLUE}📥 Downloading latest version from GitHub...{Colors.ENDC}")
+    def verify_local_installation(self) -> bool:
+        """Verify that we're in a valid local installation directory"""
+        print(f"\n{Colors.BLUE}📋 Verifying local installation directory...{Colors.ENDC}")
         
-        # Choose installation directory
-        default_dir = self.home / "nasuni-management-mcp-server"
-        install_path = input(f"Installation directory [{default_dir}]: ").strip()
+        # Check for required files/directories
+        required_items = [
+            'main.py',
+            'requirements.txt',
+            'tools',
+            'api',
+            'server'
+        ]
         
-        if not install_path:
-            self.install_dir = default_dir
-        else:
-            self.install_dir = Path(install_path).expanduser().resolve()
+        missing_items = []
+        for item in required_items:
+            item_path = self.install_dir / item
+            if not item_path.exists():
+                missing_items.append(item)
         
-        # Check if directory exists
-        if self.install_dir.exists():
-            response = input(f"{Colors.WARNING}Directory exists. Overwrite? (y/n): {Colors.ENDC}").lower()
-            if response != 'y':
-                print(f"{Colors.RED}Installation cancelled{Colors.ENDC}")
-                return False
-            shutil.rmtree(self.install_dir, ignore_errors=True)
-        
-        # Create directory
-        self.install_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Download from GitHub
-        try:
-            # Create SSL context that doesn't verify certificates (for simplicity)
-            ssl_context = ssl.create_default_context()
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_NONE
-            
-            with tempfile.TemporaryDirectory() as temp_dir:
-                temp_path = Path(temp_dir)
-                zip_path = temp_path / "nasuni-management-mcp-server.zip"
-                
-                
-                print(f"Downloading from: {GITHUB_ARCHIVE}")
-                print("This may take a moment...")
-                
-                # For Windows or quiet mode, minimize output
-                if self.os_type == "Windows" or self.args.quiet:
-                    # Simple download without progress on Windows
-                    try:
-                        print("Downloading... ", end='', flush=True)
-                        urllib.request.urlretrieve(GITHUB_ARCHIVE, zip_path)
-                        print("Done!")
-                    except Exception as e:
-                        print(f"Failed: {e}")
-                        raise
-                else:
-                    # Progress bar for Unix-like systems
-                    urllib.request.urlretrieve(
-                        GITHUB_ARCHIVE, 
-                        zip_path
-                    )
-                    print()  # New line after progress bar
-                
-                # Extract zip file
-                print(f"{Colors.BLUE}📦 Extracting files...{Colors.ENDC}")
-                
-                # For Windows or quiet mode, extract quietly to avoid console overflow
-                if self.os_type == "Windows" or self.args.quiet:
-                    print("Extracting archive... ", end='', flush=True)
-                    try:
-                        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                            # Get total number of files
-                            total_files = len(zip_ref.namelist())
-                            
-                            # Extract without verbose output
-                            zip_ref.extractall(temp_path)
-                        
-                        print(f"Done! ({total_files} files)")
-                    except Exception as e:
-                        print(f"Failed: {e}")
-                        raise
-                else:
-                    # More verbose extraction for Unix-like systems
-                    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                        total_files = len(zip_ref.namelist())
-                        print(f"Extracting {total_files} files...")
-                        
-                        # Extract with simple progress
-                        for i, file in enumerate(zip_ref.namelist()):
-                            if i % 10 == 0:  # Update every 10 files
-                                print(f'\rExtracting: {i}/{total_files} files', end='', flush=True)
-                            zip_ref.extract(file, temp_path)
-                        
-                        print(f'\rExtracted: {total_files}/{total_files} files - Done!')
-                
-                # Find the extracted directory (GitHub adds -main suffix)
-                extracted_dirs = [d for d in temp_path.iterdir() if d.is_dir()]
-                if not extracted_dirs:
-                    raise Exception("No directory found in archive")
-                
-                source_dir = extracted_dirs[0]
-                
-                # Move files to installation directory
-                print("Installing files... ", end='', flush=True)
-                files_copied = 0
-                for item in source_dir.iterdir():
-                    dest = self.install_dir / item.name
-                    if item.is_dir():
-                        shutil.copytree(item, dest, dirs_exist_ok=True)
-                        # Count files in directory
-                        files_copied += sum(1 for _ in item.rglob('*') if _.is_file())
-                    else:
-                        shutil.copy2(item, dest)
-                        files_copied += 1
-                
-                print(f"Done! ({files_copied} files installed)")
-                print(f"{Colors.GREEN}✅ Downloaded to: {self.install_dir}{Colors.ENDC}")
-                return True
-                
-        except Exception as e:
-            print(f"{Colors.RED}❌ Download failed: {e}{Colors.ENDC}")
-            print(f"\n{Colors.WARNING}Alternative: Clone manually using git:{Colors.ENDC}")
-            print(f"  git clone {GITHUB_REPO}.git {self.install_dir}")
+        if missing_items:
+            print(f"{Colors.RED}❌ Missing required files/directories: {', '.join(missing_items)}{Colors.ENDC}")
+            print(f"{Colors.WARNING}This script must be run from the local-nasuni-management-mcp-server directory{Colors.ENDC}")
             return False
+        
+        print(f"{Colors.GREEN}✅ Local installation directory verified{Colors.ENDC}")
+        print(f"{Colors.GREEN}   Installing in: {self.install_dir}{Colors.ENDC}")
+        return True
     
     def setup_virtual_environment(self) -> bool:
         """Create and setup virtual environment"""
@@ -428,7 +330,7 @@ class Installer:
                 [str(venv_python), "-m", "pip", "install", "--upgrade", "pip"],
                 capture_output=True,
                 text=True,
-                timeout=60
+                timeout=300
             )
             
             if result.returncode != 0:
@@ -581,6 +483,8 @@ class Installer:
         if not nmc_url.startswith(('http://', 'https://')):
             nmc_url = f"https://{nmc_url}"
         
+        portal_config = self.prompt_portal_configuration()
+
         # Create .env file
         env_file = self.install_dir / ".env"
         env_content = f"""# NMC API Configuration
@@ -591,6 +495,15 @@ API_TOKEN="api_token_here"
 API_TOKEN_EXPIRES= ''
 VERIFY_SSL={str(verify_ssl).lower()}
 API_TIMEOUT=30.0
+
+# Nasuni Portal API Configuration
+PORTAL_API_BASE_URL="{portal_config['base_url']}"
+PORTAL_SERVICE_KEY="{portal_config['service_key']}"
+PORTAL_SERVICE_SECRET="{portal_config['service_secret']}"
+PORTAL_ACCESS_TOKEN="{portal_config['access_token']}"
+PORTAL_REFRESH_TOKEN="{portal_config['refresh_token']}"
+PORTAL_VERIFY_SSL={portal_config['verify_ssl']}
+PORTAL_API_TIMEOUT={portal_config['timeout']}
 """
         
         try:
@@ -610,6 +523,55 @@ API_TIMEOUT=30.0
             print(f"{Colors.RED}❌ Failed to save configuration: {e}{Colors.ENDC}")
             return False
     
+    def prompt_portal_configuration(self) -> Dict[str, str]:
+        """Optionally prompt the user for Portal API credentials."""
+        defaults = {
+            "base_url": "https://am1.portal.api.nasuni.com",
+            "service_key": "",
+            "service_secret": "",
+            "access_token": "",
+            "refresh_token": "",
+            "verify_ssl": "true",
+            "timeout": "30.0",
+        }
+
+        if self.args.non_interactive:
+            return defaults
+
+        print(f"\n{Colors.HEADER}🌐 Portal API Configuration (optional){Colors.ENDC}")
+        print("Portal endpoints power advanced MCP tools. Provide your service credentials or skip to configure later.\n")
+
+        try:
+            response = input("Configure Portal API integration now? (y/n) [n]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print(f"\n{Colors.YELLOW}Skipping Portal API configuration. Update the .env later when you're ready.{Colors.ENDC}")
+            return defaults
+
+        if response not in ("y", "yes"):
+            print(f"{Colors.YELLOW}Portal integration skipped. Edit .env to enable Portal tools later.{Colors.ENDC}")
+            return defaults
+
+        base_url = input(f"Portal API Base URL [{defaults['base_url']}]: ").strip() or defaults["base_url"]
+        print("Portal Service Key: ", end='', flush=True)
+        service_key = input().strip()
+        service_secret = getpass.getpass("Portal Service Secret: ").strip()
+
+        verify_prompt = input("Verify Portal SSL certificate? (y/n) [y]: ").strip().lower()
+        verify_value = "false" if verify_prompt == 'n' else "true"
+
+        if not service_key or not service_secret:
+            print(f"{Colors.WARNING}⚠️  Portal credentials left blank. Portal MCP tools will remain disabled until you update .env.{Colors.ENDC}")
+
+        return {
+            "base_url": base_url,
+            "service_key": service_key,
+            "service_secret": service_secret,
+            "access_token": "",
+            "refresh_token": "",
+            "verify_ssl": verify_value,
+            "timeout": defaults["timeout"],
+        }
+
     def create_sample_env(self):
         """Create a sample .env file for manual configuration"""
         sample_env = self.install_dir / ".env.example"
@@ -621,6 +583,15 @@ NMC_USERNAME="your-username"
 NMC_PASSWORD="your-password"
 VERIFY_SSL=false
 API_TIMEOUT=30.0
+
+# Nasuni Portal API Configuration
+PORTAL_API_BASE_URL="https://am1.portal.api.nasuni.com"
+PORTAL_SERVICE_KEY=""
+PORTAL_SERVICE_SECRET=""
+PORTAL_ACCESS_TOKEN=""
+PORTAL_REFRESH_TOKEN=""
+PORTAL_VERIFY_SSL=true
+PORTAL_API_TIMEOUT=30.0
 """
         try:
             sample_env.write_text(env_content)
@@ -1384,8 +1355,8 @@ API_TIMEOUT=30.0
                 print(f"\n{Colors.RED}Please install Python 3.10+ and run this installer again{Colors.ENDC}")
                 return False
             
-            # Step 2: Download from GitHub
-            if not self.download_from_github():
+            # Step 2: Verify local installation directory
+            if not self.verify_local_installation():
                 return False
             
             # Step 3: Setup virtual environment

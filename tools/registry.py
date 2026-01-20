@@ -186,22 +186,47 @@ class ToolRegistry:
         print("✅ Registered 3 Portal authentication tools", file=sys.stderr)
     
     def register_portal_protection_metrics_tools(self, portal_client, integration_helper):
-        from tools.portal_protection_tools import (
+        from tools.portal_telemetry import (
             GetVolumeProtectionMetricsTool,
-            CompareVolumeProtectionMetricsTool  # Make sure this matches
+            GetVolumeDataProtectionReportTool,
+            CompareVolumeProtectionMetricsTool,
         )
         
         self.register_tool(GetVolumeProtectionMetricsTool(portal_client, integration_helper))
+        self.register_tool(GetVolumeDataProtectionReportTool(portal_client, integration_helper))
         self.register_tool(CompareVolumeProtectionMetricsTool(portal_client, integration_helper))
         
-        print("✅ Registered 2 Portal protection metrics tools (TELEMETRY)", file=sys.stderr)
+        print("✅ Registered 3 Portal protection metrics tools (TELEMETRY)", file=sys.stderr)
+
+    def register_volume_health_report_tool(self, protection_client, propagation_client, integration_helper):
+        """Register the comprehensive volume health report tool (Protection + Propagation)."""
+        from tools.portal_telemetry import GetVolumeHealthReportTool
+        
+        self.register_tool(GetVolumeHealthReportTool(
+            protection_client=protection_client,
+            propagation_client=propagation_client,
+            integration_helper=integration_helper,
+        ))
+        
+        print("✅ Registered volume health report tool (Protection + Propagation)", file=sys.stderr)
+
+    def register_fleet_volume_health_tool(self, protection_client, volumes_client, edges_client, integration_helper):
+        """Register the fleet-wide volume health summary tool."""
+        from tools.portal_telemetry import GetFleetVolumeHealthSummaryTool
+        
+        self.register_tool(GetFleetVolumeHealthSummaryTool(
+            protection_client=protection_client,
+            volumes_client=volumes_client,
+            edges_client=edges_client,
+            integration_helper=integration_helper,
+        ))
+        
+        print("✅ Registered fleet volume health summary tool", file=sys.stderr)
     
     
     def register_portal_propagation_metrics_tools(self, propagation_client, integration_helper):
         """Register Portal data propagation (sync timing) tools."""
-        from tools.portal_propagation_tools import (
-            GetVolumePropagationMetricsTool
-        )
+        from tools.portal_telemetry import GetVolumePropagationMetricsTool
         
         self.register_tool(GetVolumePropagationMetricsTool(propagation_client, integration_helper))
         
@@ -209,13 +234,12 @@ class ToolRegistry:
     
     def register_portal_combined_metrics_tools(self, protection_client, propagation_client, integration_helper):
         """Register Portal combined (end-to-end) and sync status tools."""
-        from tools.portal_protection_tools import (
-            GetEndToEndProtectionTimingTool
-        )
-        from tools.portal_appliance_sync_status_tools import (
+        from tools.portal_telemetry import (
+            GetEndToEndProtectionTimingTool,
             GetVolumeLatestVersionTool,
             CheckApplianceSyncStatusTool,
-            GetAllAppliancesSyncStatusTool
+            GetAllAppliancesSyncStatusTool,
+            FileAvailabilityTimingTool,
         )
         
         # End-to-end timing
@@ -225,23 +249,151 @@ class ToolRegistry:
             integration_helper
         ))
         
+        # File availability timing (protection + propagation to destination)
+        self.register_tool(FileAvailabilityTimingTool(
+            protection_client,
+            integration_helper
+        ))
+        
         # Sync status monitoring
         self.register_tool(GetVolumeLatestVersionTool(protection_client, integration_helper))
         self.register_tool(CheckApplianceSyncStatusTool(protection_client, propagation_client, integration_helper))
         self.register_tool(GetAllAppliancesSyncStatusTool(protection_client, propagation_client, integration_helper))
         
-        print("✅ Registered 4 Portal combined & sync status tools", file=sys.stderr)
+        print("✅ Registered 5 Portal combined & sync status tools", file=sys.stderr)
+
+    def register_portal_telemetry_tools(
+        self,
+        appliance_client,
+        volume_client,
+        integration_helper,
+    ):
+        """Register Portal Ops IQ telemetry tools for appliances and volumes."""
+        print("🔍 DEBUG: register_portal_telemetry_tools method ENTERED", file=sys.stderr)
+        print(f"🔍 DEBUG: appliance_client={appliance_client}", file=sys.stderr)
+        print(f"🔍 DEBUG: volume_client={volume_client}", file=sys.stderr)
+        print(f"🔍 DEBUG: integration_helper={integration_helper}", file=sys.stderr)
+        
+        from tools.portal_telemetry import (
+            PortalApplianceTelemetryTool,
+            PortalVolumeTelemetryTool,
+        )
+        from api.portal_telemetry_api import (
+            APPLIANCE_TELEMETRY_CONFIG,
+            VOLUME_TELEMETRY_CONFIG,
+        )
+        
+        print(f"🔍 DEBUG: APPLIANCE_TELEMETRY_CONFIG has {len(APPLIANCE_TELEMETRY_CONFIG)} entries", file=sys.stderr)
+        print(f"🔍 DEBUG: VOLUME_TELEMETRY_CONFIG has {len(VOLUME_TELEMETRY_CONFIG)} entries", file=sys.stderr)
+
+        print("📦 Registering Portal telemetry tools...", file=sys.stderr)
+        count = 0
+        
+        # Metrics to skip (replaced by smart tool)
+        SKIP_APPLIANCE_METRICS = {"memory_utilization", "memory_utilization_details"}
+        
+        for metric_key in APPLIANCE_TELEMETRY_CONFIG.keys():
+            if metric_key in SKIP_APPLIANCE_METRICS:
+                continue  # Skip - handled by smart memory tool
+            try:
+                tool = PortalApplianceTelemetryTool(metric_key, appliance_client, integration_helper)
+                self.register_tool(tool)
+                count += 1
+            except Exception as e:
+                print(f"  ❌ Failed to register appliance metric '{metric_key}': {e}", file=sys.stderr)
+                import traceback
+                traceback.print_exc(file=sys.stderr)
+
+        for metric_key in VOLUME_TELEMETRY_CONFIG.keys():
+            try:
+                tool = PortalVolumeTelemetryTool(metric_key, volume_client, integration_helper)
+                self.register_tool(tool)
+                count += 1
+            except Exception as e:
+                print(f"  ❌ Failed to register volume metric '{metric_key}': {e}", file=sys.stderr)
+                import traceback
+                traceback.print_exc(file=sys.stderr)
+
+        # Register the smart memory tool (replaces memory_utilization and memory_utilization_details)
+        from tools.portal_telemetry.appliance_tools import register_smart_memory_tool
+        register_smart_memory_tool(self, appliance_client, integration_helper)
+        count += 1
+
+        # Register WORKFLOW tools (analysis guidance)
+        # These tools return step-by-step instructions for comprehensive analysis
+        # They guide the LLM on which data tools to call and in what order
+        from tools.portal_telemetry.volume_workflow_tools import register_volume_workflow_tools
+        from tools.portal_telemetry.appliance_workflow_tools import register_appliance_workflow_tools
+        
+        register_volume_workflow_tools(self)
+        register_appliance_workflow_tools(self)
+        count += 6  # 3 volume + 3 appliance workflow tools
+
+        print(f"✅ Registered {count} Portal telemetry tools (including workflow tools)", file=sys.stderr)
+
+    def register_portal_edge_tools(
+        self,
+        edges_client,
+        integration_helper,
+    ):
+        """Register Portal Edge tools for appliance hardware details."""
+        print("📦 Registering Portal Edge tools...", file=sys.stderr)
+        
+        from tools.portal_edge_tools import register_portal_edge_tools
+        register_portal_edge_tools(self, edges_client, integration_helper)
+        
+        print("✅ Registered Portal Edge tools", file=sys.stderr)
+
+    def register_portal_volume_tools(
+        self,
+        volumes_client,
+    ):
+        """Register Portal Volume tools for volume information."""
+        print("📦 Registering Portal Volume tools...", file=sys.stderr)
+        
+        from tools.portal_volume_tools import register_portal_volume_tools
+        register_portal_volume_tools(self, volumes_client)
+        
+        print("✅ Registered Portal Volume tools", file=sys.stderr)
+
+    def register_tco_tools(self):
+        """Register Total Cost of Ownership (TCO) analysis tools."""
+        print("📦 Registering TCO tools...", file=sys.stderr)
+        
+        try:
+            from tools.tco import get_tco_tools
+            
+            for tool in get_tco_tools():
+                self.register_tool(tool)
+            
+            print("✅ Registered 4 TCO analysis tools", file=sys.stderr)
+        except ImportError as e:
+            print(f"❌ Failed to import TCO tools: {e}", file=sys.stderr)
+        except Exception as e:
+            print(f"❌ Error registering TCO tools: {e}", file=sys.stderr)
 
 
     def get_tool_list(self) -> List[Tool]:
         """Get list of all registered tools for MCP."""
         tools = []
+        failed_tools = []
+        
         for name, tool in self.tools.items():
-            tools.append(Tool(
-                name=name,
-                description=tool.description,
-                inputSchema=tool.get_schema()
-            ))
+            try:
+                tools.append(Tool(
+                    name=name,
+                    description=tool.description,
+                    inputSchema=tool.get_schema()
+                ))
+            except Exception as e:
+                failed_tools.append((name, str(e)))
+                print(f"  ⚠️  Tool '{name}' failed to serialize: {e}", file=sys.stderr)
+        
+        if failed_tools:
+            print(f"\n❌ {len(failed_tools)} tools failed to serialize:", file=sys.stderr)
+            for name, error in failed_tools:
+                print(f"   - {name}: {error}", file=sys.stderr)
+        
         return tools
     
     def get_tool_names(self) -> List[str]:
@@ -279,15 +431,18 @@ class ToolRegistry:
             'credential': [],
             'notification': [],
             'volume_filer': [],
-            'telemetry': []
+            'portal': [],
+            'tco': []
         }
         
         for name in self.tools.keys():
             
-            if ('protection_metrics' in name or 
-            'propagation_metrics' in name or
-            'end_to_end' in name):
-                tool_categories['telemetry'].append(name)
+            # TCO tools (cost optimization)
+            if name.startswith('tco_'):
+                tool_categories['tco'].append(name)
+            # Portal tools (auth and telemetry)
+            elif name.startswith('portal_'):
+                tool_categories['portal'].append(name)
             # Health monitoring
             elif 'filer_health' in name or 'health' in name:
                 tool_categories['health'].append(name)

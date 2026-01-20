@@ -304,7 +304,11 @@ class AnalyzeDataProtectionTool(BaseTool):
     def __init__(self, volume_filer_api: VolumeFilerDetailsAPIClient, volumes_api: VolumesAPIClient):
         super().__init__(
             name="analyze_data_protection",
-            description="Analyze data protection status across all volume-filer connections including accessible data amounts, unprotected data (data_not_yet_protected), protection percentages, backup coverage, and risk assessment. Identifies volumes with data at risk and provides protection recommendations. Use this for data protection assessment, risk analysis, or backup planning."
+            description=(
+                "[NMC] Analyze data protection status from NMC. "
+                "For real-time Portal metrics, use get_volume_protection_metrics. "
+                "For comprehensive reports, use get_analysis_workflow."
+            )
         )
         self.volume_filer_api = volume_filer_api
         self.volumes_api = volumes_api

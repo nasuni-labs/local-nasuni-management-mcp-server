@@ -15,7 +15,11 @@ class ListFilersTool(BaseTool):
     def __init__(self, api_client: FilersAPIClient):
         super().__init__(
             name="list_filers",
-            description="Returns a list of filer appliances/edge appliances and their hardware details including build version, management state, network status, and system health. Use this for appliance hardware management and monitoring."
+            description=(
+                "[NMC] List filer appliances from NMC with management state and network status. "
+                "NOTE: For hardware details (CPU, RAM, disk sizes), PREFER using portal_list_edges or "
+                "portal_get_edge_details instead - Portal provides more accurate hardware specifications."
+            )
         )
         self.api_client = api_client
     
@@ -62,7 +66,11 @@ class GetFilerStatsTool(BaseTool):
     def __init__(self, api_client: FilersAPIClient):
         super().__init__(
             name="get_filer_stats",
-            description="Get aggregate statistics about all filers including online/offline counts, cache usage, and platform distribution."
+            description=(
+                "[NMC] Get aggregate statistics about all filers including online/offline counts, "
+                "cache usage, and platform distribution. For individual appliance hardware details, "
+                "PREFER portal_get_edge_details instead."
+            )
         )
         self.api_client = api_client
     
@@ -95,7 +103,11 @@ class GetFilerTool(BaseTool):
     def __init__(self, api_client: FilersAPIClient):
         super().__init__(
             name="get_filer",
-            description="Get detailed information about a specific filer by its GUID or description."
+            description=(
+                "[NMC] Get filer information from NMC by GUID or description. "
+                "NOTE: For hardware details (CPU, RAM, disk sizes), PREFER using portal_get_edge_details "
+                "instead - Portal is the authoritative source for accurate hardware specifications."
+            )
         )
         self.api_client = api_client
     
