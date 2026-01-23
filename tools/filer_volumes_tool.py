@@ -64,18 +64,68 @@ class GetVolumesByFilerTool(BaseTool):
         """
         try:
             # 1. Get all volumes to find owned volumes
-            volumes_response = await self.api_client.get("/api/v1.2/volumes/")
-            if "error" in volumes_response:
-                return {"error": f"Failed to fetch volumes: {volumes_response['error']}"}
+            # volumes_response = await self.api_client.get("/api/v1.2/volumes/")
+            # if "error" in volumes_response:
+            #     return {"error": f"Failed to fetch volumes: {volumes_response['error']}"}
             
-            all_volumes = volumes_response.get("items", [])
+            # all_volumes = volumes_response.get("items", [])
+
+            # 1. Get all volumes to find owned volumes (with pagination)
+            all_volumes = []
+            offset = 0
+            limit = 50
+            
+            while True:
+                volumes_response = await self.api_client.get(
+                    f"/api/v1.2/volumes/?limit={limit}&offset={offset}"
+                )
+                if "error" in volumes_response:
+                    return {"error": f"Failed to fetch volumes: {volumes_response['error']}"}
+                
+                items = volumes_response.get("items", [])
+                if not items:
+                    break
+                
+                all_volumes.extend(items)
+                
+                # Check if we've retrieved all items
+                total = volumes_response.get("total", len(items))
+                if len(all_volumes) >= total:
+                    break
+                
+                offset += limit
             
             # 2. Get all filer connections to find remote connections
-            connections_response = await self.api_client.get("/api/v1.2/volumes/filer-connections/")
-            if "error" in connections_response:
-                return {"error": f"Failed to fetch connections: {connections_response['error']}"}
+            # connections_response = await self.api_client.get("/api/v1.2/volumes/filer-connections/")
+            # if "error" in connections_response:
+            #     return {"error": f"Failed to fetch connections: {connections_response['error']}"}
             
-            all_connections = connections_response.get("items", [])
+            # all_connections = connections_response.get("items", [])
+
+                    # 2. Get all filer connections to find remote connections (with pagination)
+            all_connections = []
+            offset = 0
+            limit = 50
+            
+            while True:
+                connections_response = await self.api_client.get(
+                    f"/api/v1.2/volumes/filer-connections/?limit={limit}&offset={offset}"
+                )
+                if "error" in connections_response:
+                    return {"error": f"Failed to fetch connections: {connections_response['error']}"}
+                
+                items = connections_response.get("items", [])
+                if not items:
+                    break
+                
+                all_connections.extend(items)
+                
+                # Check if we've retrieved all items
+                total = connections_response.get("total", len(items))
+                if len(all_connections) >= total:
+                    break
+                
+                offset += limit
             
             # Build volume lookup map
             volume_map = {v["guid"]: v for v in all_volumes}

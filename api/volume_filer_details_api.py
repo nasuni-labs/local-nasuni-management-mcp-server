@@ -2,6 +2,7 @@
 """Volume-Filer Details API client using the improved /volumes/:volume_guid/filers/ endpoint."""
 
 import json
+import sys
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 from api.base_client import BaseAPIClient
@@ -10,28 +11,116 @@ from api.base_client import BaseAPIClient
 class VolumeFilerDetailsAPIClient(BaseAPIClient):
     """API client for volume-filer connection details using the consolidated endpoint."""
     
-    async def get(self, endpoint: str) -> Dict[str, Any]:
+    # async def get(self, endpoint: str) -> Dict[str, Any]:
+    #     """Make a GET request to the API."""
+    #     return await self._make_request("GET", endpoint)
+
+    async def get(self, endpoint: str, **kwargs) -> Dict[str, Any]:
         """Make a GET request to the API."""
-        return await self._make_request("GET", endpoint)
+        return await self._make_request("GET", endpoint, **kwargs)
     
-    async def get_volume_filers(self, volume_guid: str) -> Dict[str, Any]:
+    #async def get_volume_filers(self, volume_guid: str) -> Dict[str, Any]:
+    #    """
+    #    Get all filers connected to a specific volume.
+    #    Uses the /volumes/:volume_guid/filers/ endpoint which returns both master and remote connections.
+    #    
+    #    Args:
+    #        volume_guid: The GUID of the volume
+    #        
+    #    Returns:
+    #        Dict containing all filer connections for the volume
+    #    """
+    #    try:
+    #        endpoint = f"/api/v1.2/volumes/{volume_guid}/filers/"
+    #        response = await self.get(endpoint)
+    #        return response
+    #    except Exception as e:
+    #        return {"error": f"Failed to fetch volume filers: {str(e)}"}
+
+    async def get_volume_filers(self, volume_guid: str, limit: int = 50, offset: int = 0) -> Dict[str, Any]:
         """
         Get all filers connected to a specific volume.
         Uses the /volumes/:volume_guid/filers/ endpoint which returns both master and remote connections.
         
         Args:
             volume_guid: The GUID of the volume
+            limit: Number of results per page (default: 50)
+            offset: Starting position for pagination (default: 0)
             
         Returns:
-            Dict containing all filer connections for the volume
+            Dict containing filer connections for the volume
         """
         try:
             endpoint = f"/api/v1.2/volumes/{volume_guid}/filers/"
-            response = await self.get(endpoint)
+            params = {
+                "limit": limit,
+                "offset": offset
+            }
+            
+            print(f"Fetching volume filers for {volume_guid} (limit={limit}, offset={offset})...", file=sys.stderr)
+            
+            response = await self.get(endpoint, params=params)
+            
+            if "error" not in response:
+                items_count = len(response.get("items", []))
+                total = response.get("total", items_count)
+                print(f"Successfully retrieved {items_count} filer connections (offset={offset}, total={total})", file=sys.stderr)
+            
             return response
         except Exception as e:
             return {"error": f"Failed to fetch volume filers: {str(e)}"}
     
+    # async def get_volume_filer_details(self, volume_guid: str, filer_serial: Optional[str] = None) -> Dict[str, Any]:
+    #     """
+    #     Get comprehensive details for volume-filer connections.
+    #     If filer_serial is provided, returns details for that specific filer.
+    #     Otherwise returns all filer connections for the volume.
+        
+    #     Args:
+    #         volume_guid: The GUID of the volume
+    #         filer_serial: Optional serial number of a specific filer
+            
+    #     Returns:
+    #         Dict with detailed filer connection information
+    #     """
+    #     try:
+    #         data = await self.get_volume_filers(volume_guid)
+            
+    #         if "error" in data:
+    #             return data
+            
+    #         filers = data.get("items", [])
+            
+    #         if filer_serial:
+    #             # Filter for specific filer
+    #             filer = next((f for f in filers if f["filer_serial_number"] == filer_serial), None)
+    #             if not filer:
+    #                 return {"error": f"Filer {filer_serial} not found for volume {volume_guid}"}
+    #             return self._extract_filer_details(filer)
+            
+    #         # Return all filers with enhanced details
+    #         master_filer = next((f for f in filers if f["type"] == "master"), None)
+    #         remote_filers = [f for f in filers if f["type"] == "remote"]
+            
+    #         return {
+    #             "volume_guid": volume_guid,
+    #             "volume_name": filers[0]["name"] if filers else "Unknown",
+    #             "total_filers": len(filers),
+    #             "owner": {
+    #                 "exists": master_filer is not None,
+    #                 "filer_serial": master_filer["filer_serial_number"] if master_filer else None,
+    #                 "details": self._extract_filer_details(master_filer) if master_filer else None
+    #             },
+    #             "remote_connections": {
+    #                 "count": len(remote_filers),
+    #                 "filers": [self._extract_filer_details(f) for f in remote_filers]
+    #             },
+    #             "all_filers": [self._extract_filer_details(f) for f in filers]
+    #         }
+            
+    #     except Exception as e:
+    #         return {"error": f"Failed to get volume filer details: {str(e)}"}
+
     async def get_volume_filer_details(self, volume_guid: str, filer_serial: Optional[str] = None) -> Dict[str, Any]:
         """
         Get comprehensive details for volume-filer connections.
@@ -46,28 +135,49 @@ class VolumeFilerDetailsAPIClient(BaseAPIClient):
             Dict with detailed filer connection information
         """
         try:
-            data = await self.get_volume_filers(volume_guid)
+            # Paginate through all filer connections
+            all_filers = []
+            offset = 0
+            limit = 50
             
-            if "error" in data:
-                return data
+            while True:
+                data = await self.get_volume_filers(volume_guid, limit=limit, offset=offset)
+                
+                if "error" in data:
+                    return data
+                
+                items = data.get("items", [])
+                if not items:
+                    break
+                
+                all_filers.extend(items)
+                
+                # Check if we've retrieved all filers
+                total = data.get("total", len(all_filers))
+                print(f"Retrieved {len(all_filers)} of {total} filer connections for volume {volume_guid}...", file=sys.stderr)
+                
+                if offset + limit >= total:
+                    break
+                    
+                offset += limit
             
-            filers = data.get("items", [])
+            print(f"Finished retrieving all {len(all_filers)} filer connections", file=sys.stderr)
             
             if filer_serial:
                 # Filter for specific filer
-                filer = next((f for f in filers if f["filer_serial_number"] == filer_serial), None)
+                filer = next((f for f in all_filers if f["filer_serial_number"] == filer_serial), None)
                 if not filer:
                     return {"error": f"Filer {filer_serial} not found for volume {volume_guid}"}
                 return self._extract_filer_details(filer)
             
             # Return all filers with enhanced details
-            master_filer = next((f for f in filers if f["type"] == "master"), None)
-            remote_filers = [f for f in filers if f["type"] == "remote"]
+            master_filer = next((f for f in all_filers if f["type"] == "master"), None)
+            remote_filers = [f for f in all_filers if f["type"] == "remote"]
             
             return {
                 "volume_guid": volume_guid,
-                "volume_name": filers[0]["name"] if filers else "Unknown",
-                "total_filers": len(filers),
+                "volume_name": all_filers[0]["name"] if all_filers else "Unknown",
+                "total_filers": len(all_filers),
                 "owner": {
                     "exists": master_filer is not None,
                     "filer_serial": master_filer["filer_serial_number"] if master_filer else None,
@@ -77,9 +187,9 @@ class VolumeFilerDetailsAPIClient(BaseAPIClient):
                     "count": len(remote_filers),
                     "filers": [self._extract_filer_details(f) for f in remote_filers]
                 },
-                "all_filers": [self._extract_filer_details(f) for f in filers]
+                "all_filers": [self._extract_filer_details(f) for f in all_filers]
             }
-            
+        
         except Exception as e:
             return {"error": f"Failed to get volume filer details: {str(e)}"}
     
@@ -231,11 +341,35 @@ class VolumeFilerDetailsAPIClient(BaseAPIClient):
         """
         try:
             # Get all volumes first
-            volumes_response = await self.get("/api/v1.2/volumes/")
-            if "error" in volumes_response:
-                return volumes_response
+            # volumes_response = await self.get("/api/v1.2/volumes/")
+            # if "error" in volumes_response:
+            #     return volumes_response
             
-            volumes = volumes_response.get("items", [])
+            # volumes = volumes_response.get("items", [])
+
+            # Get all volumes first - paginate through them
+            all_volumes = []
+            offset = 0
+            limit = 50
+
+            while True:
+                volumes_response = await self.get("/api/v1.2/volumes/", params={"limit": limit, "offset": offset})
+                if "error" in volumes_response:
+                    return volumes_response
+                
+                items = volumes_response.get("items", [])
+                if not items:
+                    break
+                
+                all_volumes.extend(items)
+                
+                total = volumes_response.get("total", len(all_volumes))
+                if offset + limit >= total:
+                    break
+                
+                offset += limit
+
+            volumes = all_volumes
             
             analysis = {
                 "timestamp": datetime.utcnow().isoformat(),
@@ -262,11 +396,38 @@ class VolumeFilerDetailsAPIClient(BaseAPIClient):
                 volume_name = volume.get("name", "Unknown")
                 
                 # Get filers for this volume
-                filer_data = await self.get_volume_filers(volume_guid)
-                if "error" in filer_data:
-                    continue
+                # filer_data = await self.get_volume_filers(volume_guid)
+                # if "error" in filer_data:
+                #     continue
                 
-                filers = filer_data.get("items", [])
+                # filers = filer_data.get("items", [])
+                # if not filers:
+                #     continue
+
+                # Get filers for this volume - PAGINATE THROUGH THEM
+                all_filers = []
+                filer_offset = 0
+                filer_limit = 50
+                
+                while True:
+                    filer_data = await self.get_volume_filers(volume_guid, limit=filer_limit, offset=filer_offset)
+                    if "error" in filer_data:
+                        break
+                    
+                    filer_items = filer_data.get("items", [])
+                    if not filer_items:
+                        break
+                    
+                    all_filers.extend(filer_items)
+                    
+                    filer_total = filer_data.get("total", len(all_filers))
+                    if filer_offset + filer_limit >= filer_total:
+                        break
+                    
+                    filer_offset += filer_limit
+                
+                filers = all_filers
+                
                 if not filers:
                     continue
                 
@@ -578,12 +739,35 @@ class VolumeFilerDetailsAPIClient(BaseAPIClient):
             Dict with clear ownership and access information
         """
         try:
-            data = await self.get_volume_filers(volume_guid)
+            # data = await self.get_volume_filers(volume_guid)
             
-            if "error" in data:
-                return data
+            # if "error" in data:
+            #     return data
             
-            filers = data.get("items", [])
+            # filers = data.get("items", [])
+
+            all_filers = []
+            filer_offset = 0
+            filer_limit = 50
+            
+            while True:
+                data = await self.get_volume_filers(volume_guid, limit=filer_limit, offset=filer_offset)
+                if "error" in data:
+                    break
+                
+                filer_items = data.get("items", [])
+                if not filer_items:
+                    break
+                
+                all_filers.extend(filer_items)
+                
+                filer_total = data.get("total", len(all_filers))
+                if filer_offset + filer_limit >= filer_total:
+                    break
+                
+                filer_offset += filer_limit
+            
+            filers = all_filers
             
             master_filer = next((f for f in filers if f["type"] == "master"), None)
             remote_filers = [f for f in filers if f["type"] == "remote"]

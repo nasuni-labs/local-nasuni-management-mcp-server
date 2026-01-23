@@ -10,41 +10,100 @@ from models.filer import Filer
 class FilersAPIClient(BaseAPIClient):
     """Client for interacting with the Filers API."""
     
-    async def list_filers(self) -> Dict[str, Any]:
-        """Fetch all filers from the API."""
-        print("Fetching filers from API...", file=sys.stderr)
+   # async def list_filers(self) -> Dict[str, Any]:
+   #     """Fetch all filers from the API."""
+   #     print("Fetching filers from API...", file=sys.stderr)
+   #     
+   #     response = await self.get("/api/v1.2/filers/")
+   #     
+   #     if "error" not in response:
+   #         items_count = len(response.get("items", []))
+   #         print(f"Successfully retrieved {items_count} filers", file=sys.stderr)
+   #     
+   #     return response
+    
+    async def list_filers(self, limit: int = 50, offset: int = 0) -> Dict[str, Any]:
+        """Fetch filers from the API with pagination support."""
+
+        print(f"Fetching filers from API (limit={limit}, offset={offset})...", file=sys.stderr)
         
-        response = await self.get("/api/v1.2/filers/")
+        # Add query parameters for pagination
+        params = {
+            "limit": limit,
+            "offset": offset
+        }
+        
+        response = await self.get("/api/v1.2/filers/", params=params)
         
         if "error" not in response:
             items_count = len(response.get("items", []))
-            print(f"Successfully retrieved {items_count} filers", file=sys.stderr)
+            total = response.get("total", items_count)
+            print(f"Successfully retrieved {items_count} filers (offset={offset}, total={total})", file=sys.stderr)
         
         return response
-    
+
     async def get_filer(self, filer_id: str) -> Dict[str, Any]:
         """Get a specific filer by ID."""
         print(f"Fetching filer {filer_id}...", file=sys.stderr)
         return await self.get(f"/api/v1.2/filers/{filer_id}/")
     
+    #async def get_filers_as_models(self) -> List[Filer]:
+    #    """Get filers as model objects."""
+    #    response = await self.list_filers()
+    #    
+    #    if "error" in response:
+    #        print(f"Error fetching filers: {response['error']}", file=sys.stderr)
+    #        return []
+    #    
+    #    filers = []
+    #    for item in response.get("items", []):
+    #        try:
+    #            filer = Filer(item)
+    #            filers.append(filer)
+    #        except Exception as e:
+    #            print(f"Error parsing filer data: {e}", file=sys.stderr)
+    #            continue
+    #    
+    #    return filers
+
     async def get_filers_as_models(self) -> List[Filer]:
-        """Get filers as model objects."""
-        response = await self.list_filers()
+        """Get filers as model objects, paginating through all results."""
+        all_filers = []
+        offset = 0
+        limit = 50
         
-        if "error" in response:
-            print(f"Error fetching filers: {response['error']}", file=sys.stderr)
-            return []
+        while True:
+            # Fetch a page of filers
+            response = await self.list_filers(limit=limit, offset=offset)
+            
+            if "error" in response:
+                print(f"Error fetching filers: {response['error']}", file=sys.stderr)
+                break
+            
+            items = response.get("items", [])
+            if not items:
+                break
+            
+            # Parse filers from this page
+            for item in items:
+                try:
+                    filer = Filer(item)
+                    all_filers.append(filer)
+                except Exception as e:
+                    print(f"Error parsing filer data: {e}", file=sys.stderr)
+                    continue
         
-        filers = []
-        for item in response.get("items", []):
-            try:
-                filer = Filer(item)
-                filers.append(filer)
-            except Exception as e:
-                print(f"Error parsing filer data: {e}", file=sys.stderr)
-                continue
+            # Check if we've retrieved all filers
+            total = response.get("total", len(all_filers))
+            print(f"Retrieved {len(all_filers)} of {total} filers so far...", file=sys.stderr)
+            
+            if offset + limit >= total:
+                break
+                
+            offset += limit
         
-        return filers
+        print(f"Finished retrieving all {len(all_filers)} filers", file=sys.stderr)
+        return all_filers
     
     async def test_connection(self) -> bool:
         """Test the API connection."""
