@@ -10,34 +10,15 @@ from models.share import Share
 class SharesAPIClient(BaseAPIClient):
     """Client for interacting with the Shares API."""
     
-    # async def list_shares(self) -> Dict[str, Any]:
-    #     """Fetch all shares from the API."""
-    #     print("Fetching shares from API...", file=sys.stderr)
+    async def list_shares(self) -> Dict[str, Any]:
+        """Fetch all shares from the API."""
+        print("Fetching shares from API...", file=sys.stderr)
         
-    #     response = await self.get("/api/v1.2/volumes/filers/shares/")
-        
-    #     if "error" not in response:
-    #         items_count = len(response.get("items", []))
-    #         print(f"Successfully retrieved {items_count} shares", file=sys.stderr)
-        
-    #     return response
-
-    async def list_shares(self, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
-        """Fetch shares from the API with pagination support."""
-        print(f"Fetching shares (limit={limit}, offset={offset})...", file=sys.stderr)
-        
-        endpoint = f"/api/v1.2/volumes/filers/shares/"
-        params = {
-            "limit": limit,
-            "offset": offset
-        }
-        
-        response = await self.get(endpoint, params=params)
+        response = await self.get("/api/v1.2/volumes/filers/shares/")
         
         if "error" not in response:
             items_count = len(response.get("items", []))
-            total = response.get("total", items_count)
-            print(f"Successfully retrieved {items_count} shares (offset={offset}, total={total})", file=sys.stderr)
+            print(f"Successfully retrieved {items_count} shares", file=sys.stderr)
         
         return response
     
@@ -46,36 +27,17 @@ class SharesAPIClient(BaseAPIClient):
         print(f"Fetching share {share_id}...", file=sys.stderr)
         # Note: The exact endpoint would need to be confirmed
         return await self.get(f"/api/v1.2/volumes/filers/shares/{share_id}/")
-        
-    # async def get_shares_as_models(self) -> List[Share]:
-    #     """Get shares as model objects."""
-    #     response = await self.list_shares()
-        
-    #     if "error" in response:
-    #         print(f"Error fetching shares: {response['error']}", file=sys.stderr)
-    #         return []
-        
-    #     shares = []
-    #     for item in response.get("items", []):
-    #         try:
-    #             share = Share(item)
-    #             shares.append(share)
-    #         except Exception as e:
-    #             print(f"Error parsing share data: {e}", file=sys.stderr)
-    #             continue
-        
-    #     return shares
-
+    
     async def get_shares_as_models(self) -> List[Share]:
-        """Get all shares as model objects."""
-        all_share_data = await self.get_all_shares()
+        """Get shares as model objects."""
+        response = await self.list_shares()
         
-        if not all_share_data:
-            print(f"No shares retrieved", file=sys.stderr)
+        if "error" in response:
+            print(f"Error fetching shares: {response['error']}", file=sys.stderr)
             return []
         
         shares = []
-        for item in all_share_data:
+        for item in response.get("items", []):
             try:
                 share = Share(item)
                 shares.append(share)
