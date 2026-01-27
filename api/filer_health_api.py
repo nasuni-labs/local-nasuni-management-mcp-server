@@ -10,17 +10,36 @@ from models.filer_health import FilerHealth
 class FilerHealthAPIClient(BaseAPIClient):
     """Client for interacting with the Filer Health API."""
     
-    async def list_filer_health(self) -> Dict[str, Any]:
-        """Fetch health status for all filers from the API."""
-        print("Fetching filer health data from API...", file=sys.stderr)
+    # async def list_filer_health(self) -> Dict[str, Any]:
+    #     """Fetch health status for all filers from the API."""
+    #     print("Fetching filer health data from API...", file=sys.stderr)
         
-        response = await self.get("/api/v1.2/filers/health/")
+    #     response = await self.get("/api/v1.2/filers/health/")
+        
+    #     if "error" not in response:
+    #         items_count = len(response.get("items", []))
+    #         print(f"Successfully retrieved health data for {items_count} filers", file=sys.stderr)
+        
+    #     return response
+
+    async def list_filer_health(self, limit: int = 100, offset: int = 0) -> Dict[str, Any]:
+        """Fetch health status for all filers from the API with pagination support."""
+        print(f"Fetching filer health data from API... (limit={limit}, offset={offset})", file=sys.stderr)
+
+        endpoint =f"/api/v1.2/filers/health/"
+        params = {
+            "limit": limit,
+            "offset": offset
+        }
+        
+        response = await self.get(endpoint, params=params)
         
         if "error" not in response:
             items_count = len(response.get("items", []))
-            print(f"Successfully retrieved health data for {items_count} filers", file=sys.stderr)
+            total = response.get("total", items_count)
+            print(f"Successfully retrieved health data for {items_count} filers (offset={offset}, total={total})", file=sys.stderr)
         
-        return response
+        return response   
     
     async def get_filer_health(self, filer_serial: str) -> Dict[str, Any]:
         """Get health status for a specific filer by serial number."""

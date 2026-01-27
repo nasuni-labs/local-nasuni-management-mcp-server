@@ -11,18 +11,38 @@ from models.volume_connection import VolumeConnection
 class VolumesAPIClient(BaseAPIClient):
     """Client for interacting with the Volumes API."""
     
-    async def list_volumes(self) -> Dict[str, Any]:
-        """Fetch all volumes from the API."""
-        print("Fetching volumes from API...", file=sys.stderr)
+    #async def list_volumes(self) -> Dict[str, Any]:
+    #    """Fetch all volumes from the API."""
+    #    print("Fetching volumes from API...", file=sys.stderr)
+    #    
+    #    response = await self.get("/api/v1.2/volumes/")
+    #    
+    #    if "error" not in response:
+    #        items_count = len(response.get("items", []))
+    #        print(f"Successfully retrieved {items_count} volumes", file=sys.stderr)
+    #    
+    #    return response
+
+    async def list_volumes(self, limit: int = 50, offset: int = 0) -> Dict[str, Any]:
+        """Fetch volumes from the API with pagination support."""
+        print(f"Fetching volumes from API (limit={limit}, offset={offset})...", file=sys.stderr)
         
-        response = await self.get("/api/v1.2/volumes/")
+        # Add query parameters for pagination
+        params = {
+            "limit": limit,
+            "offset": offset
+        }
+        
+        response = await self.get("/api/v1.2/volumes/", params=params)
         
         if "error" not in response:
             items_count = len(response.get("items", []))
-            print(f"Successfully retrieved {items_count} volumes", file=sys.stderr)
+            total = response.get("total", items_count)
+            print(f"Successfully retrieved {items_count} volumes (offset={offset}, total={total})", file=sys.stderr)
         
-        return response
-    
+        return response  
+
+
     async def list_volume_connections(self) -> Dict[str, Any]:
         """Fetch all volume-filer connections from the API."""
         print("Fetching volume connections from API...", file=sys.stderr)
@@ -40,24 +60,63 @@ class VolumesAPIClient(BaseAPIClient):
         print(f"Fetching volume {volume_id}...", file=sys.stderr)
         return await self.get(f"/api/v1.2/volumes/{volume_id}/")
     
+    #async def get_volumes_as_models(self) -> List[Volume]:
+    #    """Get volumes as model objects."""
+    #    response = await self.list_volumes()
+    #    
+    #    if "error" in response:
+    #        print(f"Error fetching volumes: {response['error']}", file=sys.stderr)
+    #        return []
+    #    
+    #    volumes = []
+    #    for item in response.get("items", []):
+    #        try:
+    #            volume = Volume(item)
+    #            volumes.append(volume)
+    #        except Exception as e:
+    #            print(f"Error parsing volume data: {e}", file=sys.stderr)
+    #            continue
+    #    
+    #    return volumes
+
     async def get_volumes_as_models(self) -> List[Volume]:
-        """Get volumes as model objects."""
-        response = await self.list_volumes()
+        """Get volumes as model objects, paginating through all results."""
+        all_volumes = []
+        offset = 0
+        limit = 50
         
-        if "error" in response:
-            print(f"Error fetching volumes: {response['error']}", file=sys.stderr)
-            return []
+        while True:
+            # Fetch a page of volumes
+            response = await self.list_volumes(limit=limit, offset=offset)
+            
+            if "error" in response:
+                print(f"Error fetching volumes: {response['error']}", file=sys.stderr)
+                break
+            
+            items = response.get("items", [])
+            if not items:
+                break
+            
+            # Parse volumes from this page
+            for item in items:
+                try:
+                    volume = Volume(item)
+                    all_volumes.append(volume)
+                except Exception as e:
+                    print(f"Error parsing volume data: {e}", file=sys.stderr)
+                    continue
         
-        volumes = []
-        for item in response.get("items", []):
-            try:
-                volume = Volume(item)
-                volumes.append(volume)
-            except Exception as e:
-                print(f"Error parsing volume data: {e}", file=sys.stderr)
-                continue
+            # Check if we've retrieved all volumes
+            total = response.get("total", len(all_volumes))
+            print(f"Retrieved {len(all_volumes)} of {total} volumes so far...", file=sys.stderr)
+            
+            if offset + limit >= total:
+                break
+                
+            offset += limit
         
-        return volumes
+        print(f"Finished retrieving all {len(all_volumes)} volumes", file=sys.stderr)
+        return all_volumes
     
     async def get_volume_connections_as_models(self) -> List[VolumeConnection]:
         """Get volume connections as model objects."""

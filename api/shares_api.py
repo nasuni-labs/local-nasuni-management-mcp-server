@@ -11,16 +11,48 @@ class SharesAPIClient(BaseAPIClient):
     """Client for interacting with the Shares API."""
     
     async def list_shares(self) -> Dict[str, Any]:
-        """Fetch all shares from the API."""
+        """Fetch all shares from the API with pagination support."""
         print("Fetching shares from API...", file=sys.stderr)
         
-        response = await self.get("/api/v1.2/volumes/filers/shares/")
+        all_items = []
+        offset = 0
+        limit = 100  # Fetch in batches of 100
         
-        if "error" not in response:
-            items_count = len(response.get("items", []))
-            print(f"Successfully retrieved {items_count} shares", file=sys.stderr)
+        while True:
+            # Construct URL with pagination parameters
+            url = f"/api/v1.2/volumes/filers/shares/?limit={limit}&offset={offset}"
+            print(f"Fetching shares: offset={offset}, limit={limit}", file=sys.stderr)
+            
+            response = await self.get(url)
+            
+            if "error" in response:
+                print(f"Error fetching shares at offset {offset}: {response['error']}", file=sys.stderr)
+                return response
+            
+            items = response.get("items", [])
+            if not items:
+                # No more items to fetch
+                break
+            
+            all_items.extend(items)
+            print(f"Retrieved {len(items)} shares (total so far: {len(all_items)})", file=sys.stderr)
+            
+            # Check if we have all items
+            total = response.get("total", 0)
+            if len(all_items) >= total:
+                print(f"Retrieved all {len(all_items)} shares", file=sys.stderr)
+                break
+            
+            # Move to next page
+            offset += limit
         
-        return response
+        # Return complete response with all items
+        return {
+            "items": all_items,
+            "total": len(all_items),
+            "limit": len(all_items),
+            "offset": 0
+        }
     
     async def get_share(self, share_id: str) -> Dict[str, Any]:
         """Get a specific share by ID."""
